@@ -1,14 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { addExpense } from '../db';
-import { PrimaryButton, EmptyState, LedgerList, LedgerRow, Chip, SuccessToast, theme } from './UI';
+import { PrimaryButton, EmptyState, LedgerList, LedgerRow, Chip, SuccessToast, useTheme } from './UI';
 
 const COMMON_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
+const CATEGORIES = ['Food', 'Transport', 'Stay', 'Shopping', 'Other'];
 
 export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurrency = 'INR', onChanged }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [payer, setPayer] = useState(null);
   const [amount, setAmount] = useState('');
   const [desc, setDesc] = useState('');
+  const [category, setCategory] = useState(null);
+  const [customCategory, setCustomCategory] = useState('');
+  const [fundingSource, setFundingSource] = useState('personal');
   const [currency, setCurrency] = useState(baseCurrency);
   const [fxRate, setFxRate] = useState('');
   const [showCurrency, setShowCurrency] = useState(false);
@@ -20,11 +26,14 @@ export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurr
     const amt = parseFloat(amount);
     if (!amt || !payer) return;
     if (isForeign && !parseFloat(fxRate)) return; // rate required once a foreign currency is picked
-    await addExpense(tripId, payer, amt, desc || 'Expense', {
+    const finalCategory = category === 'Other' ? (customCategory.trim() || 'Other') : category;
+    await addExpense(tripId, payer, amt, desc || finalCategory || 'Expense', {
       currency,
       fxRate: isForeign ? parseFloat(fxRate) : 1,
+      category: finalCategory,
+      fundingSource,
     });
-    setAmount(''); setDesc(''); setPayer(null); setFxRate('');
+    setAmount(''); setDesc(''); setPayer(null); setFxRate(''); setCategory(null); setCustomCategory('');
     setSavedAt(Date.now());
     onChanged();
   };
@@ -44,6 +53,13 @@ export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurr
           </View>
         </>
       )}
+
+      <Text style={styles.fieldLabel}>Paid from</Text>
+      <View style={styles.payerRow}>
+        <Chip label="Personal (settle 1:1)" active={fundingSource === 'personal'} onPress={() => setFundingSource('personal')} />
+        <Chip label="Trip Bank" active={fundingSource === 'bank'} onPress={() => setFundingSource('bank')} />
+      </View>
+
       <View style={styles.amountRow}>
         <TextInput style={[styles.input, { flex: 1 }]} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" />
         <Text
@@ -70,7 +86,24 @@ export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurr
           keyboardType="numeric"
         />
       )}
-      <TextInput style={styles.input} placeholder="Description" placeholderTextColor={theme.inkMute} value={desc} onChangeText={setDesc} />
+
+      <Text style={styles.fieldLabel}>Category</Text>
+      <View style={styles.payerRow}>
+        {CATEGORIES.map((c) => (
+          <Chip key={c} label={c} active={category === c} onPress={() => setCategory(c)} />
+        ))}
+      </View>
+      {category === 'Other' && (
+        <TextInput
+          style={styles.input}
+          placeholder="What kind of expense?"
+          placeholderTextColor={theme.inkMute}
+          value={customCategory}
+          onChangeText={setCustomCategory}
+        />
+      )}
+
+      <TextInput style={styles.input} placeholder="Description (optional)" placeholderTextColor={theme.inkMute} value={desc} onChangeText={setDesc} />
       <PrimaryButton
         label="Add expense"
         icon="plus"
@@ -92,7 +125,10 @@ export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurr
                 {item.paid_by} paid {item.amount} {item.currency !== baseCurrency ? item.currency : ''}
                 {item.currency !== baseCurrency ? ` (≈ ${(item.amount * item.fx_rate).toFixed(2)} ${baseCurrency})` : ''}
               </Text>
-              <Text style={styles.rowSub}>{item.description}</Text>
+              <Text style={styles.rowSub}>
+                {item.category ? `${item.category} · ` : ''}{item.description}{' · '}
+                {item.funding_source === 'bank' ? 'Trip Bank' : 'Personal'}
+              </Text>
             </LedgerRow>
           ))}
         </LedgerList>
@@ -101,7 +137,7 @@ export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurr
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   section: { flex: 1 },
   input: { backgroundColor: theme.surface, borderRadius: theme.radius.sm, paddingHorizontal: 14, minHeight: theme.a11y.minTouchTarget, borderWidth: 1, borderColor: theme.line, marginBottom: theme.space.sm, color: theme.ink },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
@@ -109,7 +145,7 @@ const styles = StyleSheet.create({
   currencyPicker: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },
   rowTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   rowSub: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
-  fieldLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, marginBottom: theme.space.xs, textTransform: 'uppercase', letterSpacing: 0.4 },
+  fieldLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, marginBottom: theme.space.xs, marginTop: theme.space.sm, textTransform: 'uppercase', letterSpacing: 0.4 },
   payerRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },
   noTravelersHint: { fontSize: theme.type.caption, color: theme.inkMute, lineHeight: 18, marginBottom: theme.space.md },
 });

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { addItineraryItem, deleteItineraryItem } from '../db';
-import { PrimaryButton, EmptyState, LedgerList, LedgerRow, StatHero, IconBadge, currencySymbol, theme } from './UI';
+import { PrimaryButton, EmptyState, LedgerList, LedgerRow, StatHero, IconBadge, currencySymbol, useTheme } from './UI';
 
 // Redesigned on the "one number answers the main question" pattern: Cash left is the
 // hero (biggest, most confident thing on the card), today's plan is a secondary tappable
@@ -29,6 +29,8 @@ function resolveHeroContext({ tripStatus, cashLeft, pendingDraftsCount, hour, cu
 }
 
 export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'active', pendingDraftsCount = 0, baseCurrency = 'INR', onChanged }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   // Defaults to collapsed: the hero was showing at full size every time the organizer
   // switched tabs, which is exactly the "same big card blocking the content I actually
   // want" complaint. It's still one tap away — nothing lost, just not forced on every view.
@@ -143,7 +145,7 @@ export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'act
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   hideBtn: { position: 'absolute', top: -8, end: -8, padding: 8 },
   planStrip: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

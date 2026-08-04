@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { addNote, updateNote, deleteNote, togglePinnedNote } from '../db';
-import { PrimaryButton, EmptyState, LedgerList, LedgerRow, ConfirmDialog, theme } from './UI';
+import { PrimaryButton, EmptyState, LedgerList, LedgerRow, ConfirmDialog, useTheme } from './UI';
 
 export default function NotesTab({ tripId, notes, onChanged }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(null); // {id, text}
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -90,7 +92,7 @@ export default function NotesTab({ tripId, notes, onChanged }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   section: { flex: 1 },
   row: { flexDirection: 'row', marginBottom: theme.space.sm },
   editRow: { padding: theme.space.md, marginBottom: 0 },

@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { getSafeModeData } from '../db';
 import { openDocument } from '../tripExport';
-import { theme, IconBadge, EmptyState } from './UI';
+import { useTheme, IconBadge, EmptyState } from './UI';
 
 // HOOK: this screen exists for exactly one moment — something's gone wrong (missed flight,
 // lost bag, a traveler needs the embassy number) and the organizer has ten seconds of
@@ -13,6 +13,8 @@ import { theme, IconBadge, EmptyState } from './UI';
 // chose to pin, which is why it's trustworthy: it can't show something out of date that
 // nobody bothered to enter, because there's nothing to enter.
 export default function SafeModeCard({ tripId, tripName, onClose }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function SafeModeCard({ tripId, tripName, onClose }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   overlay: { flex: 1, backgroundColor: theme.danger, position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, paddingTop: 56, paddingHorizontal: 20 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },

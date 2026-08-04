@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { addExpense, addNote, addItineraryItem } from '../db';
 import { pickAndAddDocument } from '../tripExport';
-import { PrimaryButton, IconBadge, BottomSheet, theme } from './UI';
+import { PrimaryButton, IconBadge, BottomSheet, useTheme } from './UI';
 
 // The whole point of this button is "don't make the organizer think about which tab to
 // open." So each action here is the SHORTEST possible path to a real record — same
@@ -21,6 +21,8 @@ const ACTIONS = [
 ];
 
 export default function UniversalCapture({ tripId, navigation, onChanged }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
@@ -116,7 +118,7 @@ export default function UniversalCapture({ tripId, navigation, onChanged }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   fab: {
     position: 'absolute', end: theme.space.lg, width: 52, height: 52, borderRadius: 26,
     backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center',

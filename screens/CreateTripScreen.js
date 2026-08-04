@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
-import { PrimaryButton, IconBadge, Chip, theme } from '../components/UI';
+import { PrimaryButton, IconBadge, Chip, useTheme } from '../components/UI';
 
 const COMMON_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
 
@@ -13,6 +13,8 @@ const COMMON_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
 // travelers right after naming the trip is the hook: it turns an abstract trip into a
 // concrete group of real people before the organizer has invested any real effort.
 export default function CreateTripScreen({ navigation }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [travelerInput, setTravelerInput] = useState('');
@@ -127,7 +129,7 @@ export default function CreateTripScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.bg },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 20 },
   headerTitle: { fontSize: 18, fontWeight: theme.weight.semibold, color: theme.ink },

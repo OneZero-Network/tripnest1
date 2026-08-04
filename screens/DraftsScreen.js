@@ -1,9 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, {useState, useCallback, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { addDraft, getDrafts, discardDraft, convertDraft, bucketDraftsByAge } from '../db';
-import { PrimaryButton, Chip, EmptyState, SectionHeader, LedgerList, LedgerRow, ConfirmDialog, theme } from '../components/UI';
+import { PrimaryButton, Chip, EmptyState, SectionHeader, LedgerList, LedgerRow, ConfirmDialog, useTheme } from '../components/UI';
 
 const TYPES = [
   { key: 'expense', label: 'Expense' },
@@ -20,6 +20,8 @@ function draftSummary(draft) {
 }
 
 export default function DraftsScreen({ route, navigation }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId } = route.params;
   const [drafts, setDrafts] = useState([]);
   const [captureType, setCaptureType] = useState('expense');
@@ -137,7 +139,7 @@ export default function DraftsScreen({ route, navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg, padding: theme.space.xl, paddingTop: theme.space.lg },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },

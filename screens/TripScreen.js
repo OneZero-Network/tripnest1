@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder } from 'react-native';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,7 +26,7 @@ const TABS = [
   { key: 'Timeline', icon: 'clock' },
   { key: 'Finance', icon: 'pie-chart' },
 ];
-const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, tripStatus: 'active' };
+const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [] }, tripStatus: 'active' };
 
 // TripScreen is an orchestrator: it owns the trip-wide data fetch and tab selection,
 // then hands each tab its slice of data plus a single onChanged() refresh callback.
@@ -37,6 +37,27 @@ export default function TripScreen({ route, navigation }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId, tripName, openSafeMode } = route.params;
   const [tab, setTab] = useState('Expenses');
+
+  // Swipe left/right between tabs. Deliberately conservative about claiming the gesture —
+  // only takes over once horizontal movement clearly dominates vertical (2:1 ratio, 20px
+  // minimum) so it never fights the vertical ScrollView underneath it for a normal scroll.
+  const swipeTab = (direction) => {
+    const idx = TABS.findIndex((t) => t.key === tab);
+    const nextIdx = idx + direction;
+    if (nextIdx >= 0 && nextIdx < TABS.length) setTab(TABS[nextIdx].key);
+  };
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 20 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx < -40) swipeTab(1);
+          else if (gesture.dx > 40) swipeTab(-1);
+        },
+      }),
+    [tab]
+  );
   const [travelers, setTravelers] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -132,7 +153,8 @@ export default function TripScreen({ route, navigation }) {
           </ScrollView>
         </View>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={{ flex: 1 }} {...panResponder.panHandlers}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <Container>
             {loadError ? (
               <ErrorState
@@ -144,7 +166,7 @@ export default function TripScreen({ route, navigation }) {
               <>
                 <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} tripStatus={finance.tripStatus} pendingDraftsCount={draftCount} baseCurrency={finance.baseCurrency} onChanged={loadAll} />
 
-                {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} onChanged={loadAll} />}
+                {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} finance={finance} onChanged={loadAll} />}
                 {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} travelers={travelers} baseCurrency={finance.baseCurrency} onChanged={loadAll} />}
                 {tab === 'Notes' && <NotesTab tripId={tripId} notes={notes} onChanged={loadAll} />}
                 {tab === 'Documents' && <DocumentsTab tripId={tripId} documents={documents} onChanged={loadAll} />}
@@ -154,6 +176,7 @@ export default function TripScreen({ route, navigation }) {
             )}
           </Container>
         </ScrollView>
+        </View>
 
         <UniversalCapture tripId={tripId} navigation={navigation} onChanged={loadAll} />
       </View>

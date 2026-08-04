@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { groupTimelineForReplay } from '../db';
-import { Chip, EmptyState, theme } from './UI';
+import { Chip, EmptyState, useTheme } from './UI';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -16,6 +16,8 @@ const FILTERS = [
 const ICONS = { expense: 'dollar-sign', note: 'file-text', document: 'paperclip', itinerary: 'calendar', traveler: 'user', trip: 'flag', contribution: 'gift', settlement: 'check-circle' };
 
 export default function TimelineTab({ timeline }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [filter, setFilter] = useState('all');
 
   const filtered = timeline.filter((e) => {
@@ -68,7 +70,7 @@ export default function TimelineTab({ timeline }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   section: { flex: 1 },
   filterRow: { flexGrow: 0, marginBottom: theme.space.md },
   dayGroup: { marginBottom: theme.space.lg },

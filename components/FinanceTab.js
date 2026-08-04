@@ -66,11 +66,14 @@ export default function FinanceTab({ tripId, finance, onChanged }) {
     <ScrollView style={styles.section} showsVerticalScrollIndicator={false}>
       <SuccessToast trigger={savedAt} message="Saved" />
 
-      {/* 1. CURRENT BALANCE — the one number that answers "are we okay right now" */}
+      {/* 1. CURRENT BALANCE — the Trip Bank's own cash position: contributions in, minus
+          only what's been spent FROM the bank. Personal expenses don't touch this number
+          anymore — that's the fix for "balance is -300 and nobody knows why," which was
+          the old model conflating bank spend with personal IOUs into one bucket. */}
       <StatHero
-        label="Current balance"
+        label="Trip Bank balance"
         value={`${cs}${finance.currentCash}`}
-        sublabel={`${cs}${finance.totalReceived} in · ${cs}${finance.totalSpent} out · ${finance.baseCurrency}`}
+        sublabel={`${cs}${finance.totalReceived} in · ${cs}${finance.bankSpent} spent from bank · ${finance.baseCurrency}`}
       >
         <View style={styles.statusPill}>
           <Text style={styles.statusPillText}>{finance.tripStatus === 'closed' ? 'Trip closed' : 'Trip active'}</Text>
@@ -133,12 +136,15 @@ export default function FinanceTab({ tripId, finance, onChanged }) {
         <Text style={styles.totalLine}>Total received: {cs}{finance.totalReceived}</Text>
       </Card>
 
-      {/* 4. EXPENSES PAID — what's gone out. Full itemized list lives in the Expenses tab
-          on purpose — duplicating it here would just be the same list twice; this is the
-          "how much, at a glance" checkpoint in the story, not a second ledger. */}
+      {/* 4. EXPENSES PAID — what's gone out, split by source since that's the whole point
+          of the model: bank-funded spend affects the Trip Bank balance above; personal
+          spend is a separate peer-to-peer matter settled in step 7. Full itemized list
+          lives in the Expenses tab on purpose — duplicating it here would just be the
+          same list twice. */}
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.md }}>
         <SectionHeader title="4 · Expenses paid" />
-        <Text style={styles.totalLine}>Total spent: {cs}{finance.totalSpent}</Text>
+        <Text style={styles.totalLine}>From Trip Bank: {cs}{finance.bankSpent}</Text>
+        <Text style={styles.totalLine}>Paid personally: {cs}{finance.personalSpent}</Text>
         <Text style={styles.muted}>Full itemized list is in the Expenses tab.</Text>
       </Card>
 
@@ -155,9 +161,30 @@ export default function FinanceTab({ tripId, finance, onChanged }) {
         )}
       </Card>
 
-      {/* 6. LIVE SETTLEMENT — who-owes-whom today, same computeSettlement math as before */}
+      {/* 6. TRIP BANK SETTLEMENT — Trip Bank → Person (refund unused pool cash) or
+          Person → Trip Bank (top up a shortfall). Independent of step 7's peer-to-peer
+          settlement — this is money owed to/from the shared pool, not between travelers. */}
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.md }}>
-        <SectionHeader title="6 · Live settlement · if the trip ended today" />
+        <SectionHeader title="6 · Trip Bank settlement" />
+        {Object.entries(finance.bankSettlement.balances).map(([name, bal]) => (
+          <Text key={name} style={styles.listItem}>{name}: {bal >= 0 ? '+' : ''}{cs}{bal}</Text>
+        ))}
+        {finance.bankSettlement.transactions.length === 0 ? (
+          <Text style={styles.listItem}>Nothing to settle with the Trip Bank.</Text>
+        ) : (
+          finance.bankSettlement.transactions.map((t, idx) => (
+            <Text key={idx} style={styles.listItem}>
+              {t.from === 'Trip Bank' ? `Trip Bank → ${t.to}` : `${t.from} → Trip Bank`}: {cs}{t.amount}
+              {t.from === 'Trip Bank' ? ' (refund owed)' : ' (top-up owed)'}
+            </Text>
+          ))
+        )}
+      </Card>
+
+      {/* 7. LIVE SETTLEMENT — who-owes-whom among travelers for personal expenses only,
+          same computeSettlement math as before, now correctly scoped away from bank spend */}
+      <Card style={{ padding: theme.space.lg, marginTop: theme.space.md }}>
+        <SectionHeader title="7 · Live settlement · personal expenses, if the trip ended today" />
         {finance.liveForecast.orphanedPayers?.length > 0 && (
           <View style={styles.warningBanner}>
             <Text style={styles.warningText}>
@@ -190,9 +217,9 @@ export default function FinanceTab({ tripId, finance, onChanged }) {
         )}
       </Card>
 
-      {/* 7. FINAL SETTLEMENT — the closing step, only reachable once the trip is closed */}
+      {/* 8. FINAL SETTLEMENT — the closing step, only reachable once the trip is closed */}
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.md, marginBottom: theme.space.xxl }}>
-        <SectionHeader title="7 · Final settlement" />
+        <SectionHeader title="8 · Final settlement" />
         {finance.tripStatus === 'closed' ? (
           <>
             {finance.finalSettlement.orphanedPayers?.length > 0 && (

@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, {useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { searchTrip } from '../db';
-import { SearchBar, LedgerList, LedgerRow, theme } from '../components/UI';
+import { SearchBar, LedgerList, LedgerRow, useTheme } from '../components/UI';
 
 // Feather icons, not emoji — the design system rule is one consistent icon language
 // everywhere; this screen was the one place still using emoji section labels.
@@ -29,6 +29,8 @@ function renderLine(section, item) {
 }
 
 export default function SearchScreen({ route, navigation }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId } = route.params;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
@@ -75,7 +77,7 @@ export default function SearchScreen({ route, navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg, padding: theme.space.xl, paddingTop: theme.space.lg },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: theme.space.lg, gap: theme.space.sm },
   cancelBtn: { minHeight: theme.a11y.minTouchTarget, justifyContent: 'center', paddingHorizontal: 4 },

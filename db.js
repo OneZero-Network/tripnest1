@@ -66,6 +66,19 @@ const MIGRATIONS = [
     name: '012_add_contribution_fx_rate',
     sql: `ALTER TABLE contributions ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1;`,
   },
+  {
+    name: '013_add_expense_category',
+    sql: `ALTER TABLE expenses ADD COLUMN category TEXT;`,
+  },
+  {
+    name: '014_add_expense_funding_source',
+    // Distinguishes an expense paid out of the shared Trip Bank from one a traveler paid
+    // personally and needs to be settled 1:1 for. This is the real fix for "current
+    // balance shows -300 and it's confusing" — that number was conflating two different
+    // things (pool spend vs. personal advances) into one bucket. Existing rows default to
+    // 'personal' since that's what every expense in this app has meant until now.
+    sql: `ALTER TABLE expenses ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'personal';`,
+  },
 ];
 
 export async function getDB() {
@@ -225,12 +238,15 @@ export async function addExpense(tripId, paidBy, amount, description, opts = {})
   // no conversion needed, and this is the common case for most trips.
   const fxRate = opts.fxRate ?? (currency === baseCurrency ? 1 : opts.fxRate);
   if (fxRate == null) throw new Error(`fxRate is required when currency (${currency}) differs from the trip's base currency (${baseCurrency})`);
+  const category = opts.category || null;
+  const fundingSource = opts.fundingSource === 'bank' ? 'bank' : 'personal';
   await db.runAsync(
-    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    id, tripId, paidBy, amount, description, currency, fxRate, ts
+    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, category, funding_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, paidBy, amount, description, currency, fxRate, category, fundingSource, ts
   );
   const label = currency === baseCurrency ? `${amount}` : `${amount} ${currency}`;
-  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${description}`, timestamp: ts, idSuffix: '_t' });
+  const sourceLabel = fundingSource === 'bank' ? ' from the Trip Bank' : '';
+  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${description}${sourceLabel}`, timestamp: ts, idSuffix: '_t' });
   return id;
 }
 
@@ -367,7 +383,7 @@ export async function reopenTrip(tripId) {
 // ---- Finance (settlement, trip fund, finance projection) lives in finance/calculator.js ----
 // Re-exported here so every existing "from '../db'" import across the app keeps working
 // unchanged — this is an internal file reorganization, not a public API change.
-export { setContributionPerPerson, computeSettlement, computeFinance } from './finance/calculator';
+export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement } from './finance/calculator';
 import { computeSettlement, computeFinance } from './finance/calculator';
 
 // ---- Single entry point for TripScreen's load cycle ----

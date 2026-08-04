@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { buildTripHTML, exportTripPDF } from '../tripExport';
-import { theme } from '../components/UI';
+import { useTheme } from '../components/UI';
 
 export default function ShareScreen({ route }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId, tripName } = route.params;
   const [html, setHtml] = useState(null);
 
@@ -28,7 +30,7 @@ export default function ShareScreen({ route }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.surface },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
   webview: { flex: 1 },

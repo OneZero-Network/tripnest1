@@ -1,10 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, {useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { getDB } from '../db';
 import * as QuickActions from 'expo-quick-actions';
 import * as SplashScreenNative from 'expo-splash-screen';
-import { theme } from '../components/UI';
+import { useTheme } from '../components/UI';
 
 // HOOK: the first 800ms of the app is a promise, not a loading screen. Organizers open
 // TripNest mid-chaos (at a counter, in a cab, offline). Showing the brand instantly with
@@ -17,6 +17,8 @@ import { theme } from '../components/UI';
 // the right trip card. If there's more than one active trip, most-recently-created wins,
 // matching the same rule Home's "Current Trip" card already uses, so the two stay in sync.
 export default function SplashScreen({ navigation }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const fade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export default function SplashScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center' },
   logoCircle: { width: 84, height: 84, borderRadius: 42, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
   name: { color: '#fff', fontSize: 28, fontWeight: theme.weight.semibold, letterSpacing: -0.5 },
