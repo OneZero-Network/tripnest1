@@ -1,0 +1,58 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Expo CLI + prebuild
+        run: |
+          npx expo prebuild --platform android --non-interactive
+
+      - name: Force JS bundle into debug build
+        # Debug builds normally expect a live Metro server (localhost:8081) on the device,
+        # which is why "Unable to load script" appears when the APK is installed standalone.
+        # Two earlier attempts were wrong, confirmed by real CI failures rather than guesses:
+        #   1. `react { bundleInDebug = true }` — not a valid property on this RN version.
+        #   2. `-PbundleInDebug=true` — build succeeded but silently did nothing; that
+        #      project-property mechanism belongs to the old pre-0.71 react.gradle script,
+        #      not the current Kotlin-based Gradle plugin.
+        # This is the actual current mechanism, verified against reactnative.dev's own docs:
+        # the `react {}` extension skips JS bundling for every variant listed in
+        # `debuggableVariants` (default: just "debug"). Removing "debug" from that list is
+        # what forces this specific debug build to embed the bundle.
+        run: |
+          sed -i '/^react {/a\    debuggableVariants = []' android/app/build.gradle
+          grep -A2 "^react {" android/app/build.gradle
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build APK (debug, bundle forced in)
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tripnest-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
