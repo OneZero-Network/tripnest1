@@ -215,3 +215,20 @@ the app. Producing numbers for any of those would mean inventing them. This is e
 Stage 2 device-based review you already scoped for yourself; I'm not duplicating it badly from
 source-code inspection. What I *can* and did verify from source: import correctness, duplicate
 export detection, and the specific architectural claims made above — all checked, not assumed.
+
+## Fix: "Unable to load script" on first open
+The debug APK from CI was a live-Metro build — it needs a JS bundler running nearby (USB or
+same Wi-Fi) or it can't load anything, hence the red error screen on standalone install.
+Not related to the earlier `.git` path issue at all — different problem entirely.
+
+Fix applied in the workflow: after `expo prebuild` regenerates `android/`, a step patches
+`android/app/build.gradle` to set `bundleInDebug = true` inside the `react { }` block, which
+makes the debug build embed the JS bundle the same way a release build would — no Metro, no
+signing key needed, still the simple debug pipeline.
+
+**I haven't been able to run this CI myself to confirm the sed patch lands correctly** — it's
+based on the standard Expo/RN Gradle DSL (`react { bundleInDebug = true }`), but the exact
+generated `build.gradle` layout can vary by Expo SDK version. Push this and check the new
+Actions run's "Force JS bundle into debug build" step output — the `grep -A2 "^react {"` line
+in that step will show whether the patch actually applied. If the block isn't found, paste
+that step's log back and I'll adjust the sed pattern to match.
