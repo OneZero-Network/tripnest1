@@ -3,7 +3,7 @@ import { NavigationContainer, useNavigationContainerRef } from '@react-navigatio
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as QuickActions from 'expo-quick-actions';
-import * as SplashScreen from 'expo-splash-screen';
+import * as SplashScreenNative from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from './components/UI';
 import SplashScreen from './screens/SplashScreen';
 import HomeScreen from './screens/HomeScreen';
@@ -19,7 +19,7 @@ const Stack = createNativeStackNavigator();
 // without this, Android shows its own default white screen the moment the native splash
 // would otherwise auto-hide, before any JS has even run. SplashScreen.js calls hideAsync()
 // itself once it's actually mounted and ready to paint, so the handoff has no gap.
-SplashScreen.preventAutoHideAsync().catch(() => {});
+SplashScreenNative.preventAutoHideAsync().catch(() => {});
 
 export default function App() {
   return (
