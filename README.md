@@ -267,3 +267,40 @@ own documented API, not an inferred property name. If this log's build step show
 `:app:bundleDebugJsAndAssets` (or similar) actually running, that's the real confirmation to
 look for — grep for it in the next log before assuming success from "BUILD SUCCESSFUL" alone,
 since attempt #2 proved a green build doesn't mean the fix worked.
+
+## UI/UX overhaul — lessons from mentor's reference, re-implemented in our actual RN stack
+
+Your mentor's reference project (`tripnest_v3.zip`) is a different stack entirely —
+React + Capacitor + Tailwind, not React Native/Expo. **Worth flagging**: that's the exact stack
+choice this project deliberately moved away from earlier for performance-KPI reasons. So none
+of their code was copied — the actual design *decisions* were extracted and rebuilt natively:
+
+1. **Design tokens overhauled** (`components/UI.js`): a real ink/surface/brand color system
+   (not one flat teal), larger corner radii, a defined type scale. `theme.primary`/`primaryLight`
+   etc. kept as aliases so nothing broke mid-migration.
+
+2. **Consistent icon language**: installed `@expo/vector-icons` (Feather set), replaced every
+   raw emoji (👤💰📝📄🕒💵🚩) across every screen with the same stroke-icon system via a new
+   `IconBadge` component. This was explicitly flagged as visual debt in an earlier engineering
+   review — this pass actually fixes it.
+
+3. **"One number answers the question" hero pattern**: adopted directly from the mentor's Home
+   screen. `StatHero` component. Applied to:
+   - Cockpit card → "Cash left" is now the dominant number, plan/activity demoted beneath it.
+   - Finance tab → "Current cash" hero at top, Trip Fund/Forecast/Settlement each in their own
+     clearly bordered card below, instead of 5 same-weight subheadings stacked in a row.
+
+4. **Guided empty states**: adopted the mentor's `Empty` component philosophy directly — an
+   empty state should explain *when the feature matters* and *whether it's optional*, not just
+   report "no items yet." Every tab's empty state rewritten with real guidance text.
+
+5. **Fixed a real duplicate-header bug**: screenshots showed the trip name rendered twice
+   (native stack header + our own header row below it). Not a style opinion — a bug. Fixed by
+   disabling the native header for the Trip screen and taking full manual control (back button,
+   title, action icons) in one place.
+
+6. **Tab bar**: icons paired with labels, softer card-style chips instead of flat pills.
+
+Not touched in this pass: SearchScreen and DraftsScreen still use their pre-overhaul styling —
+same gap already flagged in the earlier engineering review (shared components not yet migrated
+everywhere). Flagging again rather than letting the README imply 100% coverage.

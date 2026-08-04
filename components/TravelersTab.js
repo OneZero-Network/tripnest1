@@ -54,12 +54,18 @@ export default function TravelersTab({ tripId, travelers, onChanged }) {
               <PrimaryButton label="Save" onPress={saveEdit} style={{ marginLeft: 8 }} />
             </View>
           ) : (
-            <ListRow onPress={() => setEditing({ id: item.id, name: item.name })} actionLabel="Remove" onAction={() => confirmRemove(item)}>
-              <Text style={styles.listItem}>👤 {item.name}</Text>
+            <ListRow icon="traveler" onPress={() => setEditing({ id: item.id, name: item.name })} actionLabel="Remove" onAction={() => confirmRemove(item)}>
+              <Text style={styles.listItem}>{item.name}</Text>
             </ListRow>
           )
         )}
-        ListEmptyComponent={<EmptyState text="No travelers yet." />}
+        ListEmptyComponent={
+          <EmptyState
+            icon="traveler"
+            title="Add who's coming"
+            hint="Travelers are needed before expenses can be split or settled. Add everyone joining this trip."
+          />
+        }
       />
     </View>
   );
@@ -68,6 +74,6 @@ export default function TravelersTab({ tripId, travelers, onChanged }) {
 const styles = StyleSheet.create({
   section: { flex: 1 },
   row: { flexDirection: 'row', marginBottom: 8 },
-  input: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: theme.border, flex: 1 },
-  listItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.primaryLight, color: theme.primary },
+  input: { backgroundColor: '#fff', borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: theme.line, flex: 1, color: theme.ink },
+  listItem: { fontSize: 15, fontWeight: '600', color: theme.ink },
 });

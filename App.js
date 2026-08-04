@@ -14,7 +14,7 @@ export default function App() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerStyle: { backgroundColor: '#0F5C56' }, headerTintColor: '#fff' }}>
         <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'TripNest' }} />
-        <Stack.Screen name="Trip" component={TripScreen} options={({ route }) => ({ title: route.params.tripName })} />
+        <Stack.Screen name="Trip" component={TripScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Share" component={ShareScreen} options={{ title: 'Share Trip' }} />
         <Stack.Screen name="Search" component={SearchScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Drafts" component={DraftsScreen} options={{ headerShown: false }} />

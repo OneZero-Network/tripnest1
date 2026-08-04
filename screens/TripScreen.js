@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import { getDB, computeTripData } from '../db';
 import CockpitCard from '../components/CockpitCard';
 import TravelersTab from '../components/TravelersTab';
@@ -12,12 +13,22 @@ import FinanceTab from '../components/FinanceTab';
 import UniversalCapture from '../components/UniversalCapture';
 import { theme } from '../components/UI';
 
-const TABS = ['Travelers', 'Expenses', 'Notes', 'Documents', 'Timeline', 'Finance'];
+// Each tab paired with its own icon — consistent Feather icon language, and the icon
+// gives the tab a second, faster-to-scan identity beyond just its label text.
+const TABS = [
+  { key: 'Travelers', icon: 'users' },
+  { key: 'Expenses', icon: 'dollar-sign' },
+  { key: 'Notes', icon: 'file-text' },
+  { key: 'Documents', icon: 'paperclip' },
+  { key: 'Timeline', icon: 'clock' },
+  { key: 'Finance', icon: 'pie-chart' },
+];
 const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, tripStatus: 'active' };
 
 // TripScreen is an orchestrator: it owns the trip-wide data fetch and tab selection,
 // then hands each tab its slice of data plus a single onChanged() refresh callback.
-// Per-tab form state (inputs, editing state) now lives inside each tab component.
+// The header is fully custom (native header disabled) specifically to fix a real bug:
+// the trip name was being rendered twice — once by the native stack header, once here.
 export default function TripScreen({ route, navigation }) {
   const { tripId, tripName } = route.params;
   const [tab, setTab] = useState('Expenses');
@@ -36,8 +47,6 @@ export default function TripScreen({ route, navigation }) {
     setNotes(await db.getAllAsync('SELECT * FROM notes WHERE trip_id = ? ORDER BY created_at DESC', tripId));
     setDocuments(await db.getAllAsync('SELECT * FROM documents WHERE trip_id = ? ORDER BY created_at DESC', tripId));
     setTimeline(await db.getAllAsync('SELECT * FROM timeline WHERE trip_id = ? ORDER BY created_at DESC', tripId));
-    // Settlement computed exactly once here, shared into both Finance and Today —
-    // fixes the duplicate computation flagged in the engineering review.
     const { finance, today } = await computeTripData(tripId);
     setFinance(finance);
     setToday(today);
@@ -46,56 +55,63 @@ export default function TripScreen({ route, navigation }) {
   useFocusEffect(useCallback(() => { loadAll(); }, [tripId]));
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>{tripName}</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search', { tripId })}>
-            <Text style={styles.iconBtnText}>🔍</Text>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.container}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Feather name="arrow-left" size={22} color={theme.ink} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Drafts', { tripId })}>
-            <Text style={styles.iconBtnText}>📥</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.shareBtn} onPress={() => navigation.navigate('Share', { tripId, tripName })}>
-            <Text style={styles.shareBtnText}>Share / Export</Text>
-          </TouchableOpacity>
+          <Text style={styles.title} numberOfLines={1}>{tripName}</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search', { tripId })}>
+              <Feather name="search" size={17} color={theme.brandDeep} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Drafts', { tripId })}>
+              <Feather name="inbox" size={17} color={theme.brandDeep} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Share', { tripId, tripName })}>
+              <Feather name="share-2" size={17} color={theme.brandDeep} />
+            </TouchableOpacity>
+          </View>
         </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsRow} contentContainerStyle={{ paddingRight: 16 }}>
+          {TABS.map((t) => (
+            <TouchableOpacity key={t.key} onPress={() => setTab(t.key)} style={[styles.tab, tab === t.key && styles.tabActive]}>
+              <Feather name={t.icon} size={14} color={tab === t.key ? '#fff' : theme.inkSoft} style={{ marginRight: 6 }} />
+              <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.key}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} onChanged={loadAll} />
+
+          {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} onChanged={loadAll} />}
+          {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} onChanged={loadAll} />}
+          {tab === 'Notes' && <NotesTab tripId={tripId} notes={notes} onChanged={loadAll} />}
+          {tab === 'Documents' && <DocumentsTab tripId={tripId} documents={documents} onChanged={loadAll} />}
+          {tab === 'Timeline' && <TimelineTab timeline={timeline} />}
+          {tab === 'Finance' && <FinanceTab tripId={tripId} finance={finance} onChanged={loadAll} />}
+        </ScrollView>
+
+        <UniversalCapture tripId={tripId} navigation={navigation} onChanged={loadAll} />
       </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsRow}>
-        {TABS.map((t) => (
-          <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]}>
-            <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} onChanged={loadAll} />
-
-      {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} onChanged={loadAll} />}
-      {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} onChanged={loadAll} />}
-      {tab === 'Notes' && <NotesTab tripId={tripId} notes={notes} onChanged={loadAll} />}
-      {tab === 'Documents' && <DocumentsTab tripId={tripId} documents={documents} onChanged={loadAll} />}
-      {tab === 'Timeline' && <TimelineTab timeline={timeline} />}
-      {tab === 'Finance' && <FinanceTab tripId={tripId} finance={finance} onChanged={loadAll} />}
-
-      <UniversalCapture tripId={tripId} navigation={navigation} onChanged={loadAll} />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg, padding: 16, paddingTop: 60 },
-  title: { fontSize: 22, fontWeight: '700', color: theme.primary },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  iconBtn: { backgroundColor: theme.primaryLight, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  iconBtnText: { fontSize: 14 },
-  shareBtn: { backgroundColor: theme.primaryLight, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16 },
-  shareBtnText: { color: theme.primary, fontWeight: '600', fontSize: 12 },
-  tabsRow: { flexGrow: 0, marginBottom: 12 },
-  tab: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, backgroundColor: theme.primaryLight, marginRight: 8 },
-  tabActive: { backgroundColor: theme.primary },
-  tabText: { color: theme.primary, fontWeight: '600' },
+  safe: { flex: 1, backgroundColor: theme.bg },
+  container: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 16, paddingTop: 12 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
+  title: { flex: 1, fontSize: 19, fontWeight: '700', color: theme.ink, letterSpacing: -0.3 },
+  headerActions: { flexDirection: 'row', gap: 8 },
+  iconBtn: { backgroundColor: theme.brandWash, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  tabsRow: { flexGrow: 0, marginBottom: 14 },
+  tab: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#fff', borderWidth: 1, borderColor: theme.line, marginRight: 8 },
+  tabActive: { backgroundColor: theme.brandDeep, borderColor: theme.brandDeep },
+  tabText: { color: theme.inkSoft, fontWeight: '600', fontSize: 13 },
   tabTextActive: { color: '#fff' },
+  scrollContent: { paddingBottom: 100 },
 });

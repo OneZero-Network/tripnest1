@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
+import { EmptyState, PrimaryButton, IconBadge, theme } from '../components/UI';
 
 export default function HomeScreen({ navigation }) {
   const [trips, setTrips] = useState([]);
@@ -35,13 +37,12 @@ export default function HomeScreen({ navigation }) {
       <View style={styles.newTripRow}>
         <TextInput
           style={styles.input}
-          placeholder="New trip name"
+          placeholder="New trip name, e.g. Goa Boys Trip"
+          placeholderTextColor={theme.inkMute}
           value={newTripName}
           onChangeText={setNewTripName}
         />
-        <TouchableOpacity style={styles.addBtn} onPress={createTrip}>
-          <Text style={styles.addBtnText}>Create</Text>
-        </TouchableOpacity>
+        <PrimaryButton label="Create" icon="plus" onPress={createTrip} />
       </View>
 
       <FlatList
@@ -52,24 +53,38 @@ export default function HomeScreen({ navigation }) {
             style={styles.tripCard}
             onPress={() => navigation.navigate('Trip', { tripId: item.id, tripName: item.name })}
           >
-            <Text style={styles.tripName}>{item.name}</Text>
+            <IconBadge type="trip" size={40} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.tripName}>{item.name}</Text>
+              <Text style={styles.tripMeta}>Created {new Date(item.created_at).toLocaleDateString()}</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={theme.inkMute} />
           </TouchableOpacity>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>No trips yet. Create your first one above.</Text>}
+        ListEmptyComponent={
+          <EmptyState
+            icon="trip"
+            title="No trips yet"
+            hint="Create your first trip above — add travelers, log expenses, and everything stays right here, even offline."
+          />
+        }
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF9', padding: 20, paddingTop: 60 },
-  title: { fontSize: 28, fontWeight: '700', color: '#0F5C56' },
-  subtitle: { fontSize: 14, color: '#4C7A75', marginBottom: 20 },
-  newTripRow: { flexDirection: 'row', marginBottom: 20 },
-  input: { flex: 1, backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#CFE8E4' },
-  addBtn: { backgroundColor: '#0F5C56', marginLeft: 8, paddingHorizontal: 16, justifyContent: 'center', borderRadius: 10 },
-  addBtnText: { color: '#fff', fontWeight: '600' },
-  tripCard: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#E1F0EE' },
-  tripName: { fontSize: 17, fontWeight: '600', color: '#0F5C56' },
-  empty: { color: '#8FA8A5', textAlign: 'center', marginTop: 40 },
+  container: { flex: 1, backgroundColor: theme.bg, padding: 20, paddingTop: 60 },
+  title: { fontSize: 30, fontWeight: '700', color: theme.ink, letterSpacing: -0.5 },
+  subtitle: { fontSize: 14.5, color: theme.inkMute, marginTop: 4, marginBottom: 24 },
+  newTripRow: { flexDirection: 'row', marginBottom: 24, gap: 8 },
+  input: { flex: 1, backgroundColor: '#fff', borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: theme.line, color: theme.ink },
+  tripCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', padding: 14, borderRadius: theme.radius.lg, marginBottom: 10,
+    borderWidth: 1, borderColor: theme.line,
+    shadowColor: '#0B0F14', shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1,
+  },
+  tripName: { fontSize: 16.5, fontWeight: '700', color: theme.ink },
+  tripMeta: { fontSize: 12, color: theme.inkMute, marginTop: 2 },
 });

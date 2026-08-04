@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { groupTimelineForReplay } from '../db';
 import { Chip, EmptyState, theme } from './UI';
 
@@ -10,7 +11,9 @@ const FILTERS = [
   { key: 'document', label: 'Documents' },
   { key: 'trip_events', label: 'Trip Events' },
 ];
-const ICONS = { expense: '💰', note: '📝', document: '📄', itinerary: '🗓️', traveler: '👤', trip: '🚩', contribution: '💵' };
+// Same Feather icon language as IconBadge elsewhere — this list used to use a separate
+// emoji map, which is exactly the inconsistency the engineering review flagged.
+const ICONS = { expense: 'dollar-sign', note: 'file-text', document: 'paperclip', itinerary: 'calendar', traveler: 'user', trip: 'flag', contribution: 'gift' };
 
 export default function TimelineTab({ timeline }) {
   const [filter, setFilter] = useState('all');
@@ -31,7 +34,11 @@ export default function TimelineTab({ timeline }) {
       </ScrollView>
 
       {days.length === 0 ? (
-        <EmptyState text="Nothing here yet." />
+        <EmptyState
+          icon="expense"
+          title="Nothing to show yet"
+          hint="Once you add expenses, notes, or documents, they'll show up here as a day-by-day trip history."
+        />
       ) : (
         <ScrollView>
           {days.map((day) => (
@@ -45,7 +52,10 @@ export default function TimelineTab({ timeline }) {
                     {new Date(block.anchorTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </Text>
                   {block.events.map((ev) => (
-                    <Text key={ev.id} style={styles.blockLine}>{ICONS[ev.type] || '•'} {ev.event}</Text>
+                    <View key={ev.id} style={styles.blockLineRow}>
+                      <Feather name={ICONS[ev.type] || 'circle'} size={13} color={theme.brandDeep} style={{ marginTop: 2 }} />
+                      <Text style={styles.blockLine}>{ev.event}</Text>
+                    </View>
                   ))}
                 </View>
               ))}
@@ -59,10 +69,11 @@ export default function TimelineTab({ timeline }) {
 
 const styles = StyleSheet.create({
   section: { flex: 1 },
-  filterRow: { flexGrow: 0, marginBottom: 10 },
-  dayGroup: { marginBottom: 18 },
-  dayHeading: { fontWeight: '700', fontSize: 15, color: theme.primary, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: theme.border, paddingBottom: 4 },
-  activityBlock: { marginBottom: 10, paddingLeft: 4 },
-  blockTime: { fontSize: 11, fontWeight: '700', color: '#6B8E89', marginBottom: 2 },
-  blockLine: { fontSize: 14, color: theme.primary, paddingVertical: 2 },
+  filterRow: { flexGrow: 0, marginBottom: 12 },
+  dayGroup: { marginBottom: 20 },
+  dayHeading: { fontWeight: '700', fontSize: 15, color: theme.ink, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: theme.line, paddingBottom: 6, letterSpacing: -0.2 },
+  activityBlock: { marginBottom: 12, paddingLeft: 2 },
+  blockTime: { fontSize: 11, fontWeight: '700', color: theme.inkMute, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
+  blockLineRow: { flexDirection: 'row', gap: 8, paddingVertical: 3 },
+  blockLine: { fontSize: 14, color: theme.inkSoft, flex: 1 },
 });

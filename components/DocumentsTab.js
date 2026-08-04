@@ -8,22 +8,31 @@ export default function DocumentsTab({ tripId, documents, onChanged }) {
     <View style={styles.section}>
       <PrimaryButton
         label="Attach Document"
+        icon="paperclip"
         onPress={async () => { await pickAndAddDocument(tripId); onChanged(); }}
-        style={{ marginBottom: 8 }}
+        style={{ marginBottom: 12 }}
       />
       <FlatList
         data={documents}
         keyExtractor={(i) => i.id}
         renderItem={({ item }) => (
           <ListRow
+            icon="document"
             onPress={() => openDocument(item.uri)}
             actionLabel="Remove"
             onAction={async () => { await deleteDocument(item.id, item.uri, tripId, item.name); onChanged(); }}
           >
-            <Text style={styles.listItem}>📄 {item.name}</Text>
+            <Text style={styles.listItem}>{item.name}</Text>
           </ListRow>
         )}
-        ListEmptyComponent={<EmptyState text="No documents attached." />}
+        ListEmptyComponent={
+          <EmptyState
+            icon="document"
+            title="Attach tickets, bookings, IDs"
+            hint="Anything you'd otherwise dig for in email or photos — keep it here so it's offline and one tap away."
+            optional
+          />
+        }
       />
     </View>
   );
@@ -31,5 +40,5 @@ export default function DocumentsTab({ tripId, documents, onChanged }) {
 
 const styles = StyleSheet.create({
   section: { flex: 1 },
-  listItem: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.primaryLight, color: theme.primary },
+  listItem: { fontSize: 14.5, fontWeight: '600', color: theme.ink },
 });
