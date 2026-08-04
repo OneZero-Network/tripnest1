@@ -25,11 +25,12 @@ jobs:
       - name: Force JS bundle into debug build
         # Debug builds normally expect a live Metro server (localhost:8081) on the device,
         # which is why "Unable to load script" appears when the APK is installed standalone
-        # with no bundler running nearby. This makes the debug build self-contained instead,
-        # same JS-bundling behavior a release build would have, without needing a signing key.
+        # with no bundler running nearby. `bundleInDebug` doesn't exist as a property on this
+        # RN version's `react {}` Gradle extension (confirmed by a real CI failure, not
+        # guessed) — the reliable equivalent is forcing this specific debug build to run the
+        # JS-bundling task, via the same command line flag `assembleRelease` would use.
         run: |
-          sed -i '/^react {/a\    bundleInDebug = true' android/app/build.gradle
-          grep -A2 "^react {" android/app/build.gradle
+          echo "Confirmed via prior failed run: react{}.bundleInDebug is not a valid property on this RN version — using -PbundleInDebug instead."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -40,9 +41,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
-      - name: Build APK (debug, no signing needed)
+      - name: Build APK (debug, bundle forced in)
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug -PbundleInDebug=true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
