@@ -22,6 +22,15 @@ jobs:
         run: |
           npx expo prebuild --platform android --non-interactive
 
+      - name: Force JS bundle into debug build
+        # Debug builds normally expect a live Metro server (localhost:8081) on the device,
+        # which is why "Unable to load script" appears when the APK is installed standalone
+        # with no bundler running nearby. This makes the debug build self-contained instead,
+        # same JS-bundling behavior a release build would have, without needing a signing key.
+        run: |
+          sed -i '/^react {/a\    bundleInDebug = true' android/app/build.gradle
+          grep -A2 "^react {" android/app/build.gradle
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
