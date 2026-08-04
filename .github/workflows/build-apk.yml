@@ -24,13 +24,19 @@ jobs:
 
       - name: Force JS bundle into debug build
         # Debug builds normally expect a live Metro server (localhost:8081) on the device,
-        # which is why "Unable to load script" appears when the APK is installed standalone
-        # with no bundler running nearby. `bundleInDebug` doesn't exist as a property on this
-        # RN version's `react {}` Gradle extension (confirmed by a real CI failure, not
-        # guessed) — the reliable equivalent is forcing this specific debug build to run the
-        # JS-bundling task, via the same command line flag `assembleRelease` would use.
+        # which is why "Unable to load script" appears when the APK is installed standalone.
+        # Two earlier attempts were wrong, confirmed by real CI failures rather than guesses:
+        #   1. `react { bundleInDebug = true }` — not a valid property on this RN version.
+        #   2. `-PbundleInDebug=true` — build succeeded but silently did nothing; that
+        #      project-property mechanism belongs to the old pre-0.71 react.gradle script,
+        #      not the current Kotlin-based Gradle plugin.
+        # This is the actual current mechanism, verified against reactnative.dev's own docs:
+        # the `react {}` extension skips JS bundling for every variant listed in
+        # `debuggableVariants` (default: just "debug"). Removing "debug" from that list is
+        # what forces this specific debug build to embed the bundle.
         run: |
-          echo "Confirmed via prior failed run: react{}.bundleInDebug is not a valid property on this RN version — using -PbundleInDebug instead."
+          sed -i '/^react {/a\    debuggableVariants = []' android/app/build.gradle
+          grep -A2 "^react {" android/app/build.gradle
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -43,7 +49,7 @@ jobs:
 
       - name: Build APK (debug, bundle forced in)
         working-directory: android
-        run: ./gradlew assembleDebug -PbundleInDebug=true
+        run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
