@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { addDraft, getDrafts, discardDraft, convertDraft, bucketDraftsByAge } from '../db';
+import { PrimaryButton, Chip, EmptyState, SectionHeader, LedgerList, LedgerRow, ConfirmDialog, theme } from '../components/UI';
 
 const TYPES = [
   { key: 'expense', label: 'Expense' },
@@ -23,7 +25,7 @@ export default function DraftsScreen({ route, navigation }) {
   const [captureType, setCaptureType] = useState('expense');
   const [quickText, setQuickText] = useState('');
   const [quickAmount, setQuickAmount] = useState('');
-  const [editingDraft, setEditingDraft] = useState(null);
+  const [pendingDiscard, setPendingDiscard] = useState(null);
 
   const load = async () => setDrafts(await getDrafts(tripId));
   useFocusEffect(useCallback(() => { load(); }, [tripId]));
@@ -48,11 +50,11 @@ export default function DraftsScreen({ route, navigation }) {
     load();
   };
 
-  const confirmDiscard = (draft) => {
-    Alert.alert('Discard draft?', undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: async () => { await discardDraft(draft.id); load(); } },
-    ]);
+  const confirmDiscard = async () => {
+    if (!pendingDiscard) return;
+    await discardDraft(pendingDiscard.id);
+    setPendingDiscard(null);
+    load();
   };
 
   const buckets = bucketDraftsByAge(drafts);
@@ -63,82 +65,93 @@ export default function DraftsScreen({ route, navigation }) {
   ];
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Drafts</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()}><Text style={styles.close}>Close</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
+          <Text style={styles.close}>Close</Text>
+        </TouchableOpacity>
       </View>
       <Text style={styles.muted}>Unfinished things — not yet a real expense, note, or plan item.</Text>
 
       <View style={styles.captureCard}>
         <View style={styles.typeRow}>
           {TYPES.map((t) => (
-            <TouchableOpacity key={t.key} onPress={() => setCaptureType(t.key)} style={[styles.typeChip, captureType === t.key && styles.typeChipActive]}>
-              <Text style={[styles.typeChipText, captureType === t.key && styles.typeChipTextActive]}>{t.label}</Text>
-            </TouchableOpacity>
+            <Chip key={t.key} label={t.label} active={captureType === t.key} onPress={() => setCaptureType(t.key)} />
           ))}
         </View>
         <TextInput
           style={styles.input}
-          placeholder={captureType === 'expense' ? 'What was it for?' : captureType === 'note' ? 'Quick note...' : 'What\'s the plan?'}
+          placeholder={captureType === 'expense' ? 'What was it for?' : captureType === 'note' ? 'Quick note...' : "What's the plan?"}
+          placeholderTextColor={theme.inkMute}
           value={quickText}
           onChangeText={setQuickText}
         />
         {captureType === 'expense' && (
-          <TextInput style={styles.input} placeholder="Amount (optional)" value={quickAmount} onChangeText={setQuickAmount} keyboardType="numeric" />
+          <TextInput style={styles.input} placeholder="Amount (optional)" placeholderTextColor={theme.inkMute} value={quickAmount} onChangeText={setQuickAmount} keyboardType="numeric" />
         )}
-        <TouchableOpacity style={styles.captureBtn} onPress={submitQuickCapture}>
-          <Text style={styles.captureBtnText}>Save Draft</Text>
-        </TouchableOpacity>
+        <PrimaryButton label="Save draft" onPress={submitQuickCapture} />
       </View>
 
-      <ScrollView>
-        {drafts.length === 0 && <Text style={styles.muted}>No drafts. Quick Capture above stays out of the way until you need it.</Text>}
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {drafts.length === 0 && (
+          <EmptyState
+            icon="draft"
+            title="Capture something without deciding its shape yet"
+            hint="Quick Capture above stays out of the way until you need it — drop in a half-formed expense or note and finish it later."
+            optional
+          />
+        )}
         {sections.map((s) => s.items.length > 0 && (
           <View key={s.key} style={styles.section}>
-            <Text style={styles.sectionTitle}>{s.label}</Text>
-            {s.items.map((d) => (
-              <View key={d.id} style={styles.draftRow}>
-                <View style={{ flex: 1 }}>
+            <SectionHeader title={s.label} />
+            <LedgerList>
+              {s.items.map((d, i) => (
+                <LedgerRow key={d.id} isLast={i === s.items.length - 1}>
                   <Text style={styles.draftType}>{TYPES.find(t => t.key === d.draft_type)?.label}</Text>
                   <Text style={styles.draftText}>{draftSummary(d)}</Text>
-                </View>
-                <TouchableOpacity style={styles.convertBtn} onPress={() => handleConvert(d)}>
-                  <Text style={styles.convertBtnText}>Finish</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => confirmDiscard(d)}>
-                  <Text style={styles.discardText}>Discard</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+                  <View style={styles.draftActions}>
+                    <TouchableOpacity style={styles.convertBtn} onPress={() => handleConvert(d)}>
+                      <Text style={styles.convertBtnText}>Finish</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setPendingDiscard(d)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={styles.discardText}>Discard</Text>
+                    </TouchableOpacity>
+                  </View>
+                </LedgerRow>
+              ))}
+            </LedgerList>
           </View>
         ))}
       </ScrollView>
-    </View>
+
+      <ConfirmDialog
+        visible={!!pendingDiscard}
+        title="Discard draft?"
+        confirmLabel="Discard"
+        destructive
+        onConfirm={confirmDiscard}
+        onCancel={() => setPendingDiscard(null)}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF9', padding: 16, paddingTop: 60 },
+  container: { flex: 1, backgroundColor: theme.bg, padding: theme.space.xl, paddingTop: theme.space.lg },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 22, fontWeight: '700', color: '#0F5C56' },
-  close: { color: '#0F5C56', fontWeight: '600' },
-  muted: { color: '#8FA8A5', fontSize: 12, marginTop: 4, marginBottom: 12 },
-  captureCard: { backgroundColor: '#fff', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#E1F0EE', marginBottom: 16 },
-  typeRow: { flexDirection: 'row', marginBottom: 8 },
-  typeChip: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#E1F0EE', marginRight: 6 },
-  typeChipActive: { backgroundColor: '#0F5C56' },
-  typeChipText: { color: '#0F5C56', fontSize: 12, fontWeight: '600' },
-  typeChipTextActive: { color: '#fff' },
-  input: { backgroundColor: '#F4FAF9', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, borderWidth: 1, borderColor: '#E1F0EE', marginBottom: 8 },
-  captureBtn: { backgroundColor: '#0F5C56', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
-  captureBtnText: { color: '#fff', fontWeight: '700' },
-  section: { marginBottom: 16 },
-  sectionTitle: { fontWeight: '700', color: '#0F5C56', marginBottom: 8 },
-  draftRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#E1F0EE' },
-  draftType: { fontSize: 10, fontWeight: '700', color: '#6B8E89', textTransform: 'uppercase' },
-  draftText: { color: '#0F5C56', marginTop: 2 },
-  convertBtn: { backgroundColor: '#E1F0EE', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, marginRight: 8 },
-  convertBtnText: { color: '#0F5C56', fontWeight: '700', fontSize: 12 },
-  discardText: { color: '#B23B3B', fontWeight: '600', fontSize: 12 },
+  title: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
+  closeBtn: { minHeight: theme.a11y.minTouchTarget, justifyContent: 'center' },
+  close: { color: theme.brandDeep, fontWeight: theme.weight.semibold },
+  muted: { color: theme.inkMute, fontSize: theme.type.caption, marginTop: 4, marginBottom: theme.space.md },
+  captureCard: { backgroundColor: theme.surface, borderRadius: theme.radius.lg, padding: theme.space.md, borderWidth: 1, borderColor: theme.line, marginBottom: theme.space.lg },
+  typeRow: { flexDirection: 'row', marginBottom: theme.space.sm },
+  input: { backgroundColor: theme.bg, borderRadius: theme.radius.sm, paddingHorizontal: 12, minHeight: theme.a11y.minTouchTarget, borderWidth: 1, borderColor: theme.line, marginBottom: theme.space.sm, color: theme.ink },
+  section: { marginBottom: theme.space.lg },
+  draftType: { fontSize: 10, fontWeight: theme.weight.semibold, color: theme.inkMute, textTransform: 'uppercase' },
+  draftText: { color: theme.ink, marginTop: 2, fontSize: theme.type.body },
+  draftActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, marginTop: theme.space.sm },
+  convertBtn: { backgroundColor: theme.brandWash, paddingVertical: 6, paddingHorizontal: 12, borderRadius: theme.radius.sm },
+  convertBtnText: { color: theme.brandDeep, fontWeight: theme.weight.semibold, fontSize: theme.type.caption },
+  discardText: { color: theme.danger, fontWeight: theme.weight.semibold, fontSize: theme.type.caption },
 });

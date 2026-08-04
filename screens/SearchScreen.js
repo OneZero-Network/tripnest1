@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { searchTrip } from '../db';
+import { SearchBar, LedgerList, LedgerRow, theme } from '../components/UI';
 
-const SECTION_LABELS = {
-  travelers: '👤 Travelers',
-  expenses: '💰 Expenses',
-  notes: '📝 Notes',
-  documents: '📄 Documents',
-  timeline: '🕒 Timeline',
-  contributions: '💵 Contributions',
+// Feather icons, not emoji — the design system rule is one consistent icon language
+// everywhere; this screen was the one place still using emoji section labels.
+const SECTIONS = {
+  travelers: { label: 'Travelers', icon: 'users' },
+  expenses: { label: 'Expenses', icon: 'dollar-sign' },
+  notes: { label: 'Notes', icon: 'file-text' },
+  documents: { label: 'Documents', icon: 'paperclip' },
+  timeline: { label: 'Timeline', icon: 'clock' },
+  contributions: { label: 'Contributions', icon: 'gift' },
 };
 
 function renderLine(section, item) {
@@ -37,43 +42,47 @@ export default function SearchScreen({ route, navigation }) {
   const totalCount = results ? Object.values(results).reduce((s, arr) => s + arr.length, 0) : 0;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.headerRow}>
-        <TextInput
-          style={styles.input}
-          placeholder="Search this trip…"
-          value={query}
-          onChangeText={runSearch}
-          autoFocus
-        />
-        <TouchableOpacity onPress={() => navigation.goBack()}><Text style={styles.cancel}>Cancel</Text></TouchableOpacity>
+        <SearchBar placeholder="Search this trip…" value={query} onChangeText={runSearch} autoFocus />
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.cancelBtn}>
+          <Text style={styles.cancel}>Cancel</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView>
+      <ScrollView showsVerticalScrollIndicator={false}>
         {!results && <Text style={styles.muted}>Search expenses, notes, documents, timeline, travelers, and contributions.</Text>}
         {results && totalCount === 0 && <Text style={styles.muted}>No matches.</Text>}
         {results && Object.entries(results).map(([section, items]) => (
           items.length > 0 && (
             <View key={section} style={styles.section}>
-              <Text style={styles.sectionTitle}>{SECTION_LABELS[section]}</Text>
-              {items.map((item) => (
-                <Text key={item.id} style={styles.resultLine}>{renderLine(section, item)}</Text>
-              ))}
+              <View style={styles.sectionTitleRow}>
+                <Feather name={SECTIONS[section].icon} size={14} color={theme.inkMute} />
+                <Text style={styles.sectionTitle}>{SECTIONS[section].label}</Text>
+              </View>
+              <LedgerList>
+                {items.map((item, i) => (
+                  <LedgerRow key={item.id} isLast={i === items.length - 1}>
+                    <Text style={styles.resultLine}>{renderLine(section, item)}</Text>
+                  </LedgerRow>
+                ))}
+              </LedgerList>
             </View>
           )
         ))}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF9', padding: 16, paddingTop: 60 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  input: { flex: 1, backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#CFE8E4' },
-  cancel: { color: '#0F5C56', fontWeight: '600', marginLeft: 10 },
-  muted: { color: '#8FA8A5', textAlign: 'center', marginTop: 40 },
-  section: { marginBottom: 16 },
-  sectionTitle: { fontWeight: '700', color: '#0F5C56', marginBottom: 6 },
-  resultLine: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#E1F0EE', color: '#0F5C56' },
+  container: { flex: 1, backgroundColor: theme.bg, padding: theme.space.xl, paddingTop: theme.space.lg },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: theme.space.lg, gap: theme.space.sm },
+  cancelBtn: { minHeight: theme.a11y.minTouchTarget, justifyContent: 'center', paddingHorizontal: 4 },
+  cancel: { color: theme.brandDeep, fontWeight: theme.weight.semibold },
+  muted: { color: theme.inkMute, textAlign: 'center', marginTop: 40, fontSize: theme.type.body },
+  section: { marginBottom: theme.space.lg },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: theme.space.sm },
+  sectionTitle: { fontWeight: theme.weight.semibold, color: theme.inkMute, fontSize: theme.type.label, textTransform: 'uppercase', letterSpacing: 0.4 },
+  resultLine: { color: theme.ink, fontSize: theme.type.body },
 });

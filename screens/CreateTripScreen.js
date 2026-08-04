@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
-import { PrimaryButton, IconBadge, theme } from '../components/UI';
+import { PrimaryButton, IconBadge, Chip, theme } from '../components/UI';
+
+const COMMON_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
 
 // HOOK: this screen's job is momentum, not data entry. The design brief is explicit —
 // "only asks Trip Name + Travelers, everything else comes later" — because every extra
@@ -10,10 +13,12 @@ import { PrimaryButton, IconBadge, theme } from '../components/UI';
 // travelers right after naming the trip is the hook: it turns an abstract trip into a
 // concrete group of real people before the organizer has invested any real effort.
 export default function CreateTripScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [travelerInput, setTravelerInput] = useState('');
   const [travelers, setTravelers] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [baseCurrency, setBaseCurrency] = useState('INR');
 
   const addTraveler = () => {
     const trimmed = travelerInput.trim();
@@ -31,18 +36,27 @@ export default function CreateTripScreen({ navigation }) {
     const db = await getDB();
     const id = String(Date.now());
     const ts = Date.now();
-    await db.runAsync('INSERT INTO trips (id, name, created_at) VALUES (?, ?, ?)', id, name.trim(), ts);
-    for (const t of travelers) {
-      const tid = String(Date.now()) + Math.random().toString(36).slice(2);
-      await db.runAsync('INSERT INTO travelers (id, trip_id, name) VALUES (?, ?, ?)', tid, id, t);
+    // Wrapped in a transaction: trip creation is really one atomic action (trip + its
+    // travelers + the timeline entry), not three independent writes. Without this, killing
+    // the app mid-loop (common on memory-constrained Android devices) could leave a trip
+    // row with only some of its travelers inserted, with no signal that it happened.
+    try {
+      await db.withTransactionAsync(async () => {
+        await db.runAsync('INSERT INTO trips (id, name, base_currency, created_at) VALUES (?, ?, ?, ?)', id, name.trim(), baseCurrency, ts);
+        for (const t of travelers) {
+          const tid = String(Date.now()) + Math.random().toString(36).slice(2);
+          await db.runAsync('INSERT INTO travelers (id, trip_id, name) VALUES (?, ?, ?)', tid, id, t);
+        }
+        await logTimelineEvent({ tripId: id, type: 'trip', title: `Trip created: ${name.trim()}`, timestamp: ts, idSuffix: '_created' });
+      });
+      navigation.replace('Trip', { tripId: id, tripName: name.trim() });
+    } finally {
+      setSaving(false);
     }
-    await logTimelineEvent({ tripId: id, type: 'trip', title: `Trip created: ${name.trim()}`, timestamp: ts, idSuffix: '_created' });
-    setSaving(false);
-    navigation.replace('Trip', { tripId: id, tripName: name.trim() });
   };
 
   return (
-    <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[styles.safe, { paddingTop: insets.top + 16 }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Feather name="arrow-left" size={22} color={theme.ink} />
@@ -62,7 +76,14 @@ export default function CreateTripScreen({ navigation }) {
           autoFocus
         />
 
-        <Text style={[styles.label, { marginTop: 24 }]}>Add Travelers</Text>
+        <Text style={[styles.label, { marginTop: theme.space.xl }]}>Currency</Text>
+        <View style={styles.currencyRow}>
+          {COMMON_CURRENCIES.map((c) => (
+            <Chip key={c} label={c} active={baseCurrency === c} onPress={() => setBaseCurrency(c)} />
+          ))}
+        </View>
+
+        <Text style={[styles.label, { marginTop: theme.space.xl }]}>Add Travelers</Text>
         <View style={styles.travelerRow}>
           <TextInput
             style={styles.travelerInput}
@@ -107,17 +128,18 @@ export default function CreateTripScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.bg, paddingTop: 56 },
+  safe: { flex: 1, backgroundColor: theme.bg },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 20 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: theme.ink },
+  headerTitle: { fontSize: 18, fontWeight: theme.weight.semibold, color: theme.ink },
   body: { flex: 1, paddingHorizontal: 20 },
-  label: { fontSize: 13, fontWeight: '700', color: theme.inkMute, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
-  nameInput: { backgroundColor: '#fff', borderRadius: theme.radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17, fontWeight: '600', color: theme.ink, borderWidth: 1, borderColor: theme.line },
+  label: { fontSize: 13, fontWeight: theme.weight.semibold, color: theme.inkMute, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
+  nameInput: { backgroundColor: theme.surface, borderRadius: theme.radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17, fontWeight: theme.weight.semibold, color: theme.ink, borderWidth: 1, borderColor: theme.line },
+  currencyRow: { flexDirection: 'row', flexWrap: 'wrap' },
   travelerRow: { flexDirection: 'row', gap: 8 },
-  travelerInput: { flex: 1, backgroundColor: '#fff', borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: theme.line, color: theme.ink },
+  travelerInput: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: theme.line, color: theme.ink },
   addBtn: { backgroundColor: theme.brandDeep, width: 46, height: 46, borderRadius: theme.radius.sm, alignItems: 'center', justifyContent: 'center' },
-  travelerChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 10, borderRadius: theme.radius.md, marginBottom: 8, borderWidth: 1, borderColor: theme.line, gap: 10 },
-  travelerName: { flex: 1, fontSize: 15, fontWeight: '600', color: theme.ink },
+  travelerChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, padding: 10, borderRadius: theme.radius.md, marginBottom: 8, borderWidth: 1, borderColor: theme.line, gap: 10 },
+  travelerName: { flex: 1, fontSize: 15, fontWeight: theme.weight.semibold, color: theme.ink },
   hint: { fontSize: 13, color: theme.inkMute, lineHeight: 19, marginTop: 4 },
   footer: { padding: 20 },
 });

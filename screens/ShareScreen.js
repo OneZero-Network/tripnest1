@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { buildTripHTML, exportTripPDF } from '../tripExport';
+import { theme } from '../components/UI';
 
 export default function ShareScreen({ route }) {
   const { tripId, tripName } = route.params;
@@ -13,7 +14,7 @@ export default function ShareScreen({ route }) {
 
   if (!html) {
     return (
-      <View style={styles.center}><ActivityIndicator color="#0F5C56" /></View>
+      <View style={styles.center}><ActivityIndicator color={theme.brandDeep} /></View>
     );
   }
 
@@ -21,16 +22,16 @@ export default function ShareScreen({ route }) {
     <View style={styles.container}>
       <WebView originWhitelist={['*']} source={{ html }} style={styles.webview} />
       <TouchableOpacity style={styles.exportBtn} onPress={() => exportTripPDF(tripId, tripName)}>
-        <Text style={styles.exportBtnText}>Export as PDF / Share</Text>
+        <Text style={styles.exportBtnText}>Export as PDF / share</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: theme.surface },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bg },
   webview: { flex: 1 },
-  exportBtn: { backgroundColor: '#0F5C56', padding: 16, alignItems: 'center' },
-  exportBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  exportBtn: { backgroundColor: theme.brandDeep, minHeight: theme.a11y.minTouchTarget, alignItems: 'center', justifyContent: 'center' },
+  exportBtnText: { color: '#fff', fontWeight: theme.weight.semibold, fontSize: theme.type.heading },
 });

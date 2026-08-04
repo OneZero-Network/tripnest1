@@ -22,6 +22,50 @@ const MIGRATIONS = [
     name: '004_add_timeline_metadata',
     sql: `ALTER TABLE timeline ADD COLUMN metadata TEXT;`,
   },
+  {
+    name: '005_add_trip_custodian',
+    // The POC who physically/digitally holds the pooled trip cash (e.g. "Ayaz — SBI a/c").
+    // Purely informational: it doesn't change how settlement math works, it just answers
+    // "who do I actually hand my contribution to" — the gap organizers kept hitting.
+    sql: `ALTER TABLE trips ADD COLUMN custodian TEXT;`,
+  },
+  {
+    name: '006_add_emergency_pin_documents',
+    // Safe Mode support: an organizer pins the handful of documents that actually matter
+    // in an emergency (passport, travel insurance, ID) so Safe Mode can surface exactly
+    // those instead of every attached ticket and booking confirmation.
+    sql: `ALTER TABLE documents ADD COLUMN pinned_emergency INTEGER NOT NULL DEFAULT 0;`,
+  },
+  {
+    name: '007_add_emergency_pin_notes',
+    sql: `ALTER TABLE notes ADD COLUMN pinned_emergency INTEGER NOT NULL DEFAULT 0;`,
+  },
+  {
+    name: '008_add_trip_base_currency',
+    // The currency settlement math is done in. Every expense/contribution converts to
+    // this at entry time via fx_rate, so "cash left" and settlement transactions are
+    // always one consistent number, never a sum of mismatched currencies.
+    sql: `ALTER TABLE trips ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'INR';`,
+  },
+  {
+    name: '009_add_expense_currency',
+    sql: `ALTER TABLE expenses ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR';`,
+  },
+  {
+    name: '010_add_expense_fx_rate',
+    // amount_in_base_currency = amount * fx_rate. Rate is captured at entry time (not
+    // looked up live) because settlement must stay reproducible — a trip closed in March
+    // should settle at March's rate, not whatever the rate is when someone reopens it later.
+    sql: `ALTER TABLE expenses ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1;`,
+  },
+  {
+    name: '011_add_contribution_currency',
+    sql: `ALTER TABLE contributions ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR';`,
+  },
+  {
+    name: '012_add_contribution_fx_rate',
+    sql: `ALTER TABLE contributions ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1;`,
+  },
 ];
 
 export async function getDB() {
@@ -96,6 +140,19 @@ export async function getDB() {
         partial_data TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+      -- A settlement is a REAL recorded transfer between two travelers reconciling their
+      -- computed balance (e.g. "Tariq paid Ayaz ₹500 in cash"), as distinct from an
+      -- expense or a contribution. Recording it lets computeSettlement() net it out of
+      -- the outstanding from→to list, which is the missing piece that made "settle up"
+      -- a read-only report instead of something you could actually check off.
+      CREATE TABLE IF NOT EXISTS settlements (
+        id TEXT PRIMARY KEY,
+        trip_id TEXT NOT NULL,
+        from_traveler TEXT NOT NULL,
+        to_traveler TEXT NOT NULL,
+        amount REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      );
 
       -- Every table is queried exclusively by trip_id ("WHERE trip_id = ?" everywhere) —
       -- these turn every one of those into an index lookup instead of a full table scan.
@@ -107,6 +164,7 @@ export async function getDB() {
       CREATE INDEX IF NOT EXISTS idx_itinerary_trip ON itinerary_items(trip_id);
       CREATE INDEX IF NOT EXISTS idx_contributions_trip ON contributions(trip_id);
       CREATE INDEX IF NOT EXISTS idx_drafts_trip ON drafts(trip_id);
+      CREATE INDEX IF NOT EXISTS idx_settlements_trip ON settlements(trip_id);
     `);
 
     const applied = new Set(
@@ -145,15 +203,34 @@ export async function logTimelineEvent({ tripId, type, title, metadata = null, t
 }
 
 // Financial history is immutable: expenses are only ever inserted, never updated/deleted.
-export async function addExpense(tripId, paidBy, amount, description) {
+// ---- Currency helpers ----
+async function getTripBaseCurrency(tripId) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT base_currency FROM trips WHERE id = ?', tripId);
+  return trip?.base_currency || 'INR';
+}
+
+export async function setBaseCurrency(tripId, currency) {
+  const db = await getDB();
+  await db.runAsync('UPDATE trips SET base_currency = ? WHERE id = ?', currency, tripId);
+}
+
+export async function addExpense(tripId, paidBy, amount, description, opts = {}) {
   const db = await getDB();
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
   const ts = Date.now();
+  const baseCurrency = await getTripBaseCurrency(tripId);
+  const currency = opts.currency || baseCurrency;
+  // fx_rate defaults to 1 when the expense is already in the trip's base currency —
+  // no conversion needed, and this is the common case for most trips.
+  const fxRate = opts.fxRate ?? (currency === baseCurrency ? 1 : opts.fxRate);
+  if (fxRate == null) throw new Error(`fxRate is required when currency (${currency}) differs from the trip's base currency (${baseCurrency})`);
   await db.runAsync(
-    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    id, tripId, paidBy, amount, description, ts
+    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, paidBy, amount, description, currency, fxRate, ts
   );
-  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${amount} for ${description}`, timestamp: ts, idSuffix: '_t' });
+  const label = currency === baseCurrency ? `${amount}` : `${amount} ${currency}`;
+  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${description}`, timestamp: ts, idSuffix: '_t' });
   return id;
 }
 
@@ -206,23 +283,75 @@ export async function deleteNote(noteId, tripId) {
   await logTimelineEvent({ tripId, type: 'note', title: 'Note deleted', timestamp: ts, idSuffix: '_dn' });
 }
 
+// ---- Safe Mode: pin/unpin + a single fetch for the emergency view ----
+// Toggling reuses the existing notes/documents tables (pinned_emergency is just a flag on
+// each row) rather than a parallel "emergency contacts" table — an organizer pins whatever
+// note or document already has the info (passport photo, "Embassy: +91..." note) instead
+// of re-entering it somewhere else.
+export async function togglePinnedDocument(docId) {
+  const db = await getDB();
+  await db.runAsync('UPDATE documents SET pinned_emergency = NOT pinned_emergency WHERE id = ?', docId);
+}
+
+export async function togglePinnedNote(noteId) {
+  const db = await getDB();
+  await db.runAsync('UPDATE notes SET pinned_emergency = NOT pinned_emergency WHERE id = ?', noteId);
+}
+
+export async function getSafeModeData(tripId) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT * FROM trips WHERE id = ?', tripId);
+  const travelers = await db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId);
+  const documents = await db.getAllAsync('SELECT * FROM documents WHERE trip_id = ? AND pinned_emergency = 1 ORDER BY created_at DESC', tripId);
+  const notes = await db.getAllAsync('SELECT * FROM notes WHERE trip_id = ? AND pinned_emergency = 1 ORDER BY created_at DESC', tripId);
+  return { trip, travelers, documents, notes };
+}
+
 // ---- Contributions: money travelers put into the trip fund (received only — see note) ----
 // "Expected" contributions are NOT modeled here: that needs a per-traveler target or split
 // rule nobody has specified yet. Building it silently would mean inventing a default the
 // organizer never asked for. This tracks money actually received, full stop.
-export async function addContribution(tripId, traveler, amount) {
+export async function addContribution(tripId, traveler, amount, opts = {}) {
   const db = await getDB();
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
   const ts = Date.now();
+  const baseCurrency = await getTripBaseCurrency(tripId);
+  const currency = opts.currency || baseCurrency;
+  const fxRate = opts.fxRate ?? (currency === baseCurrency ? 1 : opts.fxRate);
+  if (fxRate == null) throw new Error(`fxRate is required when currency (${currency}) differs from the trip's base currency (${baseCurrency})`);
   await db.runAsync(
-    'INSERT INTO contributions (id, trip_id, traveler, amount, created_at) VALUES (?, ?, ?, ?, ?)',
-    id, tripId, traveler, amount, ts
+    'INSERT INTO contributions (id, trip_id, traveler, amount, currency, fx_rate, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, traveler, amount, currency, fxRate, ts
   );
-  await logTimelineEvent({ tripId, type: 'contribution', title: `${traveler} contributed ${amount} to the trip fund`, timestamp: ts, idSuffix: '_t' });
+  const label = currency === baseCurrency ? `${amount}` : `${amount} ${currency}`;
+  await logTimelineEvent({ tripId, type: 'contribution', title: `${traveler} contributed ${label} to the trip fund`, timestamp: ts, idSuffix: '_t' });
   return id;
 }
 
 // ---- Trip lifecycle: minimal active/closed status, needed only to gate Final Settlement ----
+// ---- Fund custodian: who the pooled cash actually sits with ----
+export async function setCustodian(tripId, custodian) {
+  const db = await getDB();
+  await db.runAsync('UPDATE trips SET custodian = ? WHERE id = ?', custodian, tripId);
+}
+
+// ---- Recording a real settlement between two travelers (reconciliation) ----
+// This is a source-of-truth write, same tier as an expense or contribution — it represents
+// something that actually happened ("X paid Y ₹amount"), which is why it gets its own
+// table instead of being inferred. computeSettlement() nets these against the greedy
+// from→to list so a paid transaction stops showing as outstanding.
+export async function recordSettlement(tripId, from, to, amount) {
+  const db = await getDB();
+  const id = String(Date.now()) + Math.random().toString(36).slice(2);
+  const ts = Date.now();
+  await db.runAsync(
+    'INSERT INTO settlements (id, trip_id, from_traveler, to_traveler, amount, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    id, tripId, from, to, amount, ts
+  );
+  await logTimelineEvent({ tripId, type: 'settlement', title: `${from} paid ${to} ${amount}`, timestamp: ts, idSuffix: '_settle' });
+  return id;
+}
+
 export async function closeTrip(tripId) {
   const db = await getDB();
   await db.runAsync("UPDATE trips SET status = 'closed' WHERE id = ?", tripId);
