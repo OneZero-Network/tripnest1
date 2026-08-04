@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { getDB } from '../db';
 import * as QuickActions from 'expo-quick-actions';
+import * as SplashScreenNative from 'expo-splash-screen';
 import { theme } from '../components/UI';
 
 // HOOK: the first 800ms of the app is a promise, not a loading screen. Organizers open
@@ -19,6 +20,11 @@ export default function SplashScreen({ navigation }) {
   const fade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Native splash is still showing at this point (App.js called preventAutoHideAsync).
+    // Hiding it now, the instant this component has mounted and is ready to paint, means
+    // the handoff from native splash to this animated one has no gap — never a bare white
+    // frame in between, which was the actual bug being reported.
+    SplashScreenNative.hideAsync().catch(() => {});
     Animated.timing(fade, { toValue: 1, duration: 450, useNativeDriver: true }).start();
 
     (async () => {

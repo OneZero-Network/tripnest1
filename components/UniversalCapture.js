@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { addExpense, addNote, addItineraryItem } from '../db';
 import { pickAndAddDocument } from '../tripExport';
@@ -20,6 +21,7 @@ const ACTIONS = [
 ];
 
 export default function UniversalCapture({ tripId, navigation, onChanged }) {
+  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
   const [text, setText] = useState('');
@@ -63,7 +65,13 @@ export default function UniversalCapture({ tripId, navigation, onChanged }) {
 
   return (
     <>
-      <TouchableOpacity style={styles.fab} onPress={() => setOpen(true)} activeOpacity={0.85} accessibilityLabel="Add to trip" accessibilityRole="button">
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + theme.space.lg }]}
+        onPress={() => setOpen(true)}
+        activeOpacity={0.85}
+        accessibilityLabel="Add to trip"
+        accessibilityRole="button"
+      >
         <Feather name="plus" size={26} color="#fff" />
       </TouchableOpacity>
 
@@ -110,9 +118,9 @@ export default function UniversalCapture({ tripId, navigation, onChanged }) {
 
 const styles = StyleSheet.create({
   fab: {
-    position: 'absolute', bottom: 20, end: 4, width: 58, height: 58, borderRadius: 29,
+    position: 'absolute', end: theme.space.lg, width: 52, height: 52, borderRadius: 26,
     backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center',
-    shadowColor: theme.brandDeep, shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    shadowColor: theme.brandDeep, shadowOpacity: 0.16, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   title: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, letterSpacing: -0.2 },
   subtitle: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 3, marginBottom: theme.space.md },

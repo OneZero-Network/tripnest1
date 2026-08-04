@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { addExpense } from '../db';
-import { PrimaryButton, EmptyState, LedgerList, LedgerRow, Chip, theme } from './UI';
+import { PrimaryButton, EmptyState, LedgerList, LedgerRow, Chip, SuccessToast, theme } from './UI';
 
 const COMMON_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
 
-export default function ExpensesTab({ tripId, expenses, baseCurrency = 'INR', onChanged }) {
-  const [payer, setPayer] = useState('');
+export default function ExpensesTab({ tripId, expenses, travelers = [], baseCurrency = 'INR', onChanged }) {
+  const [payer, setPayer] = useState(null);
   const [amount, setAmount] = useState('');
   const [desc, setDesc] = useState('');
   const [currency, setCurrency] = useState(baseCurrency);
   const [fxRate, setFxRate] = useState('');
   const [showCurrency, setShowCurrency] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
 
   const isForeign = currency !== baseCurrency;
 
@@ -23,13 +24,26 @@ export default function ExpensesTab({ tripId, expenses, baseCurrency = 'INR', on
       currency,
       fxRate: isForeign ? parseFloat(fxRate) : 1,
     });
-    setAmount(''); setDesc(''); setPayer(''); setFxRate('');
+    setAmount(''); setDesc(''); setPayer(null); setFxRate('');
+    setSavedAt(Date.now());
     onChanged();
   };
 
   return (
     <View style={styles.section}>
-      <TextInput style={styles.input} placeholder="Who paid?" placeholderTextColor={theme.inkMute} value={payer} onChangeText={setPayer} />
+      <SuccessToast trigger={savedAt} message="Expense added" />
+      {travelers.length === 0 ? (
+        <Text style={styles.noTravelersHint}>Add travelers first — expenses are only recorded against real trip travelers, never free text.</Text>
+      ) : (
+        <>
+          <Text style={styles.fieldLabel}>Who paid?</Text>
+          <View style={styles.payerRow}>
+            {travelers.map((t) => (
+              <Chip key={t.id} label={t.name} active={payer === t.name} onPress={() => setPayer(t.name)} />
+            ))}
+          </View>
+        </>
+      )}
       <View style={styles.amountRow}>
         <TextInput style={[styles.input, { flex: 1 }]} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" />
         <Text
@@ -57,7 +71,12 @@ export default function ExpensesTab({ tripId, expenses, baseCurrency = 'INR', on
         />
       )}
       <TextInput style={styles.input} placeholder="Description" placeholderTextColor={theme.inkMute} value={desc} onChangeText={setDesc} />
-      <PrimaryButton label="Add expense" icon="plus" onPress={submit} style={{ marginBottom: theme.space.md }} />
+      <PrimaryButton
+        label="Add expense"
+        icon="plus"
+        onPress={submit}
+        style={{ marginBottom: theme.space.md, opacity: travelers.length === 0 ? 0.5 : 1 }}
+      />
 
       {expenses.length === 0 ? (
         <EmptyState
@@ -90,4 +109,7 @@ const styles = StyleSheet.create({
   currencyPicker: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },
   rowTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   rowSub: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
+  fieldLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, marginBottom: theme.space.xs, textTransform: 'uppercase', letterSpacing: 0.4 },
+  payerRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },
+  noTravelersHint: { fontSize: theme.type.caption, color: theme.inkMute, lineHeight: 18, marginBottom: theme.space.md },
 });

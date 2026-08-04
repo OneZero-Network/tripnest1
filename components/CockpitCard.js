@@ -29,7 +29,10 @@ function resolveHeroContext({ tripStatus, cashLeft, pendingDraftsCount, hour, cu
 }
 
 export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'active', pendingDraftsCount = 0, baseCurrency = 'INR', onChanged }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Defaults to collapsed: the hero was showing at full size every time the organizer
+  // switched tabs, which is exactly the "same big card blocking the content I actually
+  // want" complaint. It's still one tap away — nothing lost, just not forced on every view.
+  const [collapsed, setCollapsed] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('');
@@ -59,6 +62,7 @@ export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'act
     <>
       {!collapsed ? (
         <StatHero
+          style={{ marginBottom: theme.space.lg }}
           label={ctx.label}
           value={heroValue}
           sublabel={heroSublabel}
@@ -90,7 +94,7 @@ export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'act
           )}
         </StatHero>
       ) : (
-        <TouchableOpacity style={styles.collapsedBar} onPress={() => setCollapsed(false)}>
+        <TouchableOpacity style={[styles.collapsedBar, { marginBottom: theme.space.lg }]} onPress={() => setCollapsed(false)}>
           <IconBadge type="check" size={22} />
           <Text style={styles.collapsedText}>{ctx.label}: {heroValue} · tap for today</Text>
         </TouchableOpacity>

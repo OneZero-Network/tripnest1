@@ -27,13 +27,30 @@ export async function computeSettlement(tripId) {
   const travelers = await db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId);
   const expenses = await db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ?', tripId);
   const settlementRows = await db.getAllAsync('SELECT * FROM settlements WHERE trip_id = ?', tripId);
-  if (travelers.length === 0) return { balances: {}, transactions: [], settledTransactions: settlementRows };
+  if (travelers.length === 0) return { balances: {}, transactions: [], settledTransactions: settlementRows, orphanedPayers: [] };
 
   const total = expenses.reduce((s, e) => s + e.amount * e.fx_rate, 0);
   const share = total / travelers.length;
   const paidByPerson = {};
+  const travelerNames = new Set(travelers.map(t => t.name));
   travelers.forEach(t => (paidByPerson[t.name] = 0));
-  expenses.forEach(e => (paidByPerson[e.paid_by] = (paidByPerson[e.paid_by] || 0) + e.amount * e.fx_rate));
+
+  // An expense paid by someone not in the current travelers list (stale data from before
+  // the payer field was locked to real travelers, or a traveler removed after the fact)
+  // has nowhere to go in the balance math below — silently dropping that money would make
+  // the settlement wrong without any sign that it happened, which is exactly what
+  // produced "all settled up" while every real traveler still showed a negative balance.
+  // Tracked here and surfaced to the UI instead of swallowed.
+  const orphanedTotals = {};
+  expenses.forEach(e => {
+    const amt = e.amount * e.fx_rate;
+    if (travelerNames.has(e.paid_by)) {
+      paidByPerson[e.paid_by] += amt;
+    } else {
+      orphanedTotals[e.paid_by] = (orphanedTotals[e.paid_by] || 0) + amt;
+    }
+  });
+  const orphanedPayers = Object.entries(orphanedTotals).map(([name, amount]) => ({ name, amount: +amount.toFixed(2) }));
 
   const balances = {};
   travelers.forEach(t => (balances[t.name] = +(paidByPerson[t.name] - share).toFixed(2)));
@@ -61,7 +78,7 @@ export async function computeSettlement(tripId) {
     if (debtors[i][1] < 0.01) i++;
     if (creditors[j][1] < 0.01) j++;
   }
-  return { balances, transactions, settledTransactions: settlementRows };
+  return { balances, transactions, settledTransactions: settlementRows, orphanedPayers };
 }
 
 // ---- Finance: projection over contributions + expenses, no new derived storage ----

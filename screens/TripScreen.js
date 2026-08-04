@@ -145,7 +145,7 @@ export default function TripScreen({ route, navigation }) {
                 <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} tripStatus={finance.tripStatus} pendingDraftsCount={draftCount} baseCurrency={finance.baseCurrency} onChanged={loadAll} />
 
                 {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} onChanged={loadAll} />}
-                {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} baseCurrency={finance.baseCurrency} onChanged={loadAll} />}
+                {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} travelers={travelers} baseCurrency={finance.baseCurrency} onChanged={loadAll} />}
                 {tab === 'Notes' && <NotesTab tripId={tripId} notes={notes} onChanged={loadAll} />}
                 {tab === 'Documents' && <DocumentsTab tripId={tripId} documents={documents} onChanged={loadAll} />}
                 {tab === 'Timeline' && <TimelineTab timeline={timeline} />}

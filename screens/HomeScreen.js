@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native
 // react-native-safe-area-context's SafeAreaView (not the react-native core one, which is
 // iOS-only and a no-op on Android — that no-op is exactly why the greeting text was
 // rendering underneath the Android status bar).
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { getDB, computeTripData, getDrafts } from '../db';
@@ -22,6 +22,7 @@ import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Conta
 // used for expenses/timeline, because a trip list is repeated records, not a set of
 // independent bounded objects. No shadows anywhere on this screen.
 export default function HomeScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [trips, setTrips] = useState([]);
@@ -146,7 +147,12 @@ export default function HomeScreen({ navigation }) {
         }
       />
 
-      <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('CreateTrip')} accessibilityLabel="Create trip" accessibilityRole="button">
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + theme.space.lg }]}
+        onPress={() => navigation.navigate('CreateTrip')}
+        accessibilityLabel="Create trip"
+        accessibilityRole="button"
+      >
         <Feather name="plus" size={26} color="#fff" />
       </TouchableOpacity>
     </SafeAreaView>
@@ -195,8 +201,8 @@ const makeStyles = (theme) => StyleSheet.create({
   tripName: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   tripMeta: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
   fab: {
-    position: 'absolute', end: 20, bottom: 28, width: 58, height: 58, borderRadius: 29,
+    position: 'absolute', end: theme.space.lg, width: 52, height: 52, borderRadius: 26,
     backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center',
-    shadowColor: theme.brandDeep, shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    shadowColor: theme.brandDeep, shadowOpacity: 0.16, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
 });

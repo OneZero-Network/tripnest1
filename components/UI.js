@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 // ---- Currency symbol lookup: falls back to the code itself + a space for anything not
@@ -175,11 +175,11 @@ export function IconBadge({ type, size = 36, tone = 'brand' }) {
 // ---- StatHero: the "one number that answers the main question" pattern ----
 // Every screen used to give every stat equal visual weight. This makes the single most
 // important number dominate, with everything else demoted to caption size beneath it.
-export function StatHero({ label, value, sublabel, children }) {
+export function StatHero({ label, value, sublabel, children, style }) {
   const theme = useTheme();
   const styles = useStyles();
   return (
-    <View style={styles.hero}>
+    <View style={[styles.hero, style]}>
       <Text style={styles.heroLabel}>{label}</Text>
       <Text style={styles.heroValue}>{value}</Text>
       {sublabel && <Text style={styles.heroSublabel}>{sublabel}</Text>}
@@ -216,7 +216,7 @@ export function PrimaryButton({ label, onPress, style, icon }) {
   const theme = useTheme();
   const styles = useStyles();
   return (
-    <TouchableOpacity style={[styles.btn, style]} onPress={onPress}>
+    <TouchableOpacity style={[styles.btn, style]} onPress={onPress} activeOpacity={0.85}>
       {icon && <Feather name={icon} size={16} color="#fff" style={{ marginEnd: 6 }} />}
       <Text style={styles.btnText}>{label}</Text>
     </TouchableOpacity>
@@ -229,7 +229,7 @@ export function SecondaryButton({ label, onPress, style, icon }) {
   const theme = useTheme();
   const styles = useStyles();
   return (
-    <TouchableOpacity style={[styles.btnSecondary, style]} onPress={onPress}>
+    <TouchableOpacity style={[styles.btnSecondary, style]} onPress={onPress} activeOpacity={0.85}>
       {icon && <Feather name={icon} size={16} color={theme.ink} style={{ marginEnd: 6 }} />}
       <Text style={styles.btnSecondaryText}>{label}</Text>
     </TouchableOpacity>
@@ -261,7 +261,7 @@ export function LedgerRow({ onPress, children, icon, iconTone, actionLabel, onAc
     </View>
   );
   if (!onPress) return content;
-  return <TouchableOpacity onPress={onPress}>{content}</TouchableOpacity>;
+  return <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{content}</TouchableOpacity>;
 }
 
 // ---- StatusChip: small labeled state indicator — pairs a color with a word, never color
@@ -367,7 +367,7 @@ export function BottomSheet({ visible, onClose, children }) {
   const theme = useTheme();
   const styles = useStyles();
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
         <View style={styles.sheetCard} onStartShouldSetResponder={() => true}>
           <View style={styles.sheetHandle} />
@@ -381,6 +381,40 @@ export function BottomSheet({ visible, onClose, children }) {
 // ---- ErrorState: what a screen shows when a load genuinely fails, instead of a blank
 // screen or a silently-empty list. Distinct from EmptyState — this means "something went
 // wrong," not "there's nothing here yet." ----
+// ---- SuccessToast: the "did that actually work" feedback that was completely missing —
+// saves happened instantly and silently, which reads as broken on a slower device even
+// when it worked. Auto-dismisses; caller just flips `visible` true and forgets it. ----
+export function SuccessToast({ trigger, message = 'Saved' }) {
+  const theme = useTheme();
+  const styles = useStyles();
+  const [visible, setVisible] = React.useState(false);
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  const translateY = React.useRef(new Animated.Value(8)).current;
+
+  React.useEffect(() => {
+    if (trigger == null) return;
+    setVisible(true);
+    opacity.setValue(0);
+    translateY.setValue(8);
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => setVisible(false));
+      }, theme.motion.successAnim);
+    });
+  }, [trigger]);
+
+  if (!visible) return null;
+  return (
+    <Animated.View style={[styles.toast, { opacity, transform: [{ translateY }] }]} pointerEvents="none">
+      <Feather name="check-circle" size={15} color="#fff" />
+      <Text style={styles.toastText}>{message}</Text>
+    </Animated.View>
+  );
+}
+
 export function ErrorState({ title = 'Something went wrong', hint, onRetry }) {
   const theme = useTheme();
   const styles = useStyles();
@@ -484,6 +518,11 @@ const makeStyles = (theme) => StyleSheet.create({
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(20,24,28,0.4)', justifyContent: 'flex-end' },
   sheetCard: { backgroundColor: theme.surface, borderTopLeftRadius: theme.radius.xl, borderTopRightRadius: theme.radius.xl, padding: theme.space.xl, paddingBottom: theme.space.xxl },
   sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: theme.line, alignSelf: 'center', marginBottom: theme.space.lg },
+  toast: {
+    position: 'absolute', top: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: theme.ink, borderRadius: theme.radius.sm, paddingVertical: 8, paddingHorizontal: 14,
+  },
+  toastText: { color: theme.bg, fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
   chip: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 18, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.line, marginEnd: 8 },
   chipActive: { backgroundColor: theme.brandDeep, borderColor: theme.brandDeep },
   chipText: { color: theme.inkSoft, fontSize: 13, fontWeight: '600' },

@@ -1,4 +1,11 @@
-import * as FileSystem from 'expo-file-system';
+// Deliberately the /legacy entry point, not the bare 'expo-file-system' import: since
+// Expo SDK 54, the default export replaced documentDirectory/getInfoAsync/copyAsync/
+// deleteAsync/makeDirectoryAsync with a new File/Directory class API — calling any of the
+// old function-style methods via the default import now throws at runtime. This file
+// uses the old API throughout, so it needs the explicit /legacy path. This was very
+// likely the actual cause of "document attachment is not functioning" — every call below
+// would have failed silently or thrown.
+import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
