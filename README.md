@@ -232,3 +232,38 @@ generated `build.gradle` layout can vary by Expo SDK version. Push this and chec
 Actions run's "Force JS bundle into debug build" step output — the `grep -A2 "^react {"` line
 in that step will show whether the patch actually applied. If the block isn't found, paste
 that step's log back and I'll adjust the sed pattern to match.
+
+## Fix attempt #2 — bundleInDebug via project property, not Gradle DSL
+Fix attempt #1 (`react { bundleInDebug = true }`) failed in CI with:
+`Could not set unknown property 'bundleInDebug' for extension 'react'` — that property doesn't
+exist on this RN version's Gradle extension. Confirmed by an actual failed build log, not
+assumed.
+
+Fix attempt #2: pass `-PbundleInDebug=true` as a Gradle project property on the command line
+instead (`./gradlew assembleDebug -PbundleInDebug=true`). This is checked internally by the
+React Native Gradle plugin's own task logic (`project.hasProperty('bundleInDebug')`), separate
+from the `react {}` extension's typed properties — it's the documented mechanism for this exact
+situation in React Native's Gradle plugin.
+
+**Same caveat as before: unverified by an actual run.** I don't have a way to execute this
+Gradle build myself. If this also fails, send the next log — specifically the exact error text,
+since that's what let me find the real cause last time instead of guessing again.
+
+## Fix attempt #3 — debuggableVariants (verified against React Native's own docs)
+Attempts #1 and #2 both failed, confirmed by actual CI logs, not assumption:
+- #1: `react { bundleInDebug = true }` → "unknown property" — doesn't exist on this RN version.
+- #2: `-PbundleInDebug=true` → build succeeded, but `bundleDebugJsAndAssets` never ran (checked
+  the log directly for that task name — absent). That mechanism is from the old pre-0.71
+  `react.gradle` script and doesn't apply to the current Kotlin-based Gradle plugin.
+
+#3 is different: instead of guessing another property name, I searched and read
+reactnative.dev's own React Native Gradle Plugin documentation. The real mechanism: the
+`react {}` extension has a `debuggableVariants` list (default `["debug"]`) — any variant in
+that list gets its JS bundling **skipped**, which is exactly the "Unable to load script"
+symptom. Setting `debuggableVariants = []` is what forces this debug build to actually bundle.
+
+Still can't run this myself to give 100% confirmation — but this one is backed by the plugin's
+own documented API, not an inferred property name. If this log's build step shows the task
+`:app:bundleDebugJsAndAssets` (or similar) actually running, that's the real confirmation to
+look for — grep for it in the next log before assuming success from "BUILD SUCCESSFUL" alone,
+since attempt #2 proved a green build doesn't mean the fix worked.
