@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -166,6 +167,18 @@ export default function TripScreen({ route, navigation }) {
               </TouchableOpacity>
             ))}
           </ScrollView>
+          {/* A real discoverability bug this fixes: "Settle" was scrolled off-screen with
+              zero visual hint that more tabs existed past "Activity" — showsHorizontalScroll
+              Indicator={false} means the OS scrollbar hint is off too, so there was
+              genuinely nothing telling a first-time user to swipe. This fade doesn't block
+              taps (pointerEvents="none") — it's purely the "there's more this way" cue. */}
+          <LinearGradient
+            colors={[`${theme.bg}00`, theme.bg]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.tabsFadeEdge}
+            pointerEvents="none"
+          />
         </View>
 
         <View style={{ flex: 1 }} {...panResponder.panHandlers}>
@@ -184,7 +197,7 @@ export default function TripScreen({ route, navigation }) {
                 {tab === 'Members' && <TravelersTab tripId={tripId} travelers={travelers} expenses={expenses} finance={finance} onChanged={loadAll} />}
                 {tab === 'Expenses' && <ExpensesTab expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Activity' && <TimelineTab timeline={timeline} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
-                {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} tripName={tripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} />}
+                {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} expenses={expenses} tripName={tripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} onOpenExpenses={() => changeTab('Expenses')} />}
                 {tab === 'Settle' && <SettlementTab tripId={tripId} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
               </>
             )}
@@ -231,7 +244,8 @@ const makeStyles = (theme) => StyleSheet.create({
   title: { flex: 1, fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, letterSpacing: -0.3 },
   headerActions: { flexDirection: 'row', gap: theme.space.md },
   iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  tabsRow: { marginBottom: theme.space.md, borderBottomWidth: 1, borderBottomColor: theme.line },
+  tabsRow: { marginBottom: theme.space.md, borderBottomWidth: 1, borderBottomColor: theme.line, position: 'relative' },
+  tabsFadeEdge: { position: 'absolute', top: 0, bottom: 0, end: 0, width: 28 },
   tab: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, marginEnd: theme.space.lg, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabActive: { borderBottomColor: theme.brand },
   tabText: { color: theme.inkMute, fontWeight: theme.weight.medium, fontSize: theme.type.label },

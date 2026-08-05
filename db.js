@@ -499,6 +499,64 @@ export async function computeTripData(tripId) {
 // settlements, and plan items coming up in the next 24 hours, for every active trip.
 // Nothing here is invented; it's the same data Settlement/Drafts/Cockpit already compute,
 // just gathered from every trip in one pass instead of one trip at a time. ----
+// ---- Destination insights: "how many times have I been here, with whom, how much" ----
+// Trip names are free text ("Goa Trip 2026," "Goa with friends," "Weekend in Goa") — there's
+// no separate structured "destination" field anywhere in the schema. Rather than adding
+// one (a real migration, and it still wouldn't retroactively fix trips already named
+// freely), this normalizes names heuristically: lowercase, strip common trip-naming
+// filler words and years, and use what's left as the place key. Imperfect for unusual
+// naming, but correct for the common case, and it costs nothing to be wrong about a trip
+// that just never gets grouped — the trip's own data is never touched by this.
+const STOPWORDS = new Set(['trip', 'vacation', 'holiday', 'weekend', 'getaway', 'with', 'and', 'the', 'a', 'an', 'to', 'in', 'our', 'my', 'friends', 'family', 'gang']);
+function placeKey(tripName) {
+  const words = (tripName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !STOPWORDS.has(w) && !/^\d{4}$/.test(w)); // drop stopwords and bare years
+  return words[0] || null;
+}
+
+export async function getDestinationInsights() {
+  const db = await getDB();
+  const trips = await db.getAllAsync('SELECT * FROM trips ORDER BY created_at ASC');
+
+  const groups = {};
+  trips.forEach((t) => {
+    const key = placeKey(t.name);
+    if (!key) return;
+    if (!groups[key]) groups[key] = { label: t.name, trips: [] };
+    groups[key].trips.push(t);
+  });
+
+  const insights = [];
+  for (const group of Object.values(groups)) {
+    if (group.trips.length < 2) continue; // "insight" implies a pattern — one visit isn't one yet
+
+    let totalSpent = 0;
+    const companionCounts = {};
+    for (const trip of group.trips) {
+      const spentRow = await db.getFirstAsync('SELECT COALESCE(SUM(amount*fx_rate),0) as total FROM expenses WHERE trip_id = ?', trip.id);
+      totalSpent += spentRow.total;
+      const travelers = await db.getAllAsync('SELECT name FROM travelers WHERE trip_id = ?', trip.id);
+      travelers.forEach((tr) => { companionCounts[tr.name] = (companionCounts[tr.name] || 0) + 1; });
+    }
+    const topCompanions = Object.entries(companionCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name]) => name);
+
+    insights.push({
+      place: group.trips[group.trips.length - 1].name, // most recent trip's own naming, most recognizable to the user
+      visitCount: group.trips.length,
+      totalSpent,
+      baseCurrency: group.trips[0].base_currency || 'INR',
+      topCompanions,
+    });
+  }
+  return insights.sort((a, b) => b.visitCount - a.visitCount);
+}
+
 export async function getNotificationFeed() {
   const db = await getDB();
   const trips = await db.getAllAsync("SELECT * FROM trips WHERE status = 'active' ORDER BY created_at DESC");

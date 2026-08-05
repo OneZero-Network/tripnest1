@@ -1,5 +1,5 @@
 import React, {useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
@@ -22,7 +22,6 @@ export default function CreateTripScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState('INR');
   const [hasTripBank, setHasTripBank] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const addTraveler = () => {
     const trimmed = travelerInput.trim();
@@ -119,24 +118,23 @@ export default function CreateTripScreen({ navigation }) {
           ListEmptyComponent={<Text style={styles.hint}>You can add yourself and others now, or later from the Travelers tab.</Text>}
         />
 
-        <TouchableOpacity style={styles.advancedToggle} onPress={() => setAdvancedOpen((v) => !v)}>
-          <Text style={styles.advancedToggleText}>{advancedOpen ? '− Advanced options' : '+ Advanced options'}</Text>
-        </TouchableOpacity>
-
-        {advancedOpen && (
-          <View style={styles.bankToggleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bankToggleLabel}>Trip Bank (Optional)</Text>
-              <Text style={styles.bankToggleHint}>Off by default — most trips just log expenses and settle directly. Turn this on only if you want to pool money into a shared bank first.</Text>
-              <Text style={styles.learnMoreLink} onPress={() => navigation.navigate('HowItWorks')}>How does this work? →</Text>
-            </View>
-            <Switch
-              value={hasTripBank}
-              onValueChange={setHasTripBank}
-              trackColor={{ false: theme.line, true: theme.brand }}
-              thumbColor="#fff"
-            />
-          </View>
+        {/* This was previously buried behind a "+ Advanced options" text link — one
+            reviewer round said Trip Bank appeared too early and should be nearly
+            invisible; the next round said hiding it entirely leaves the mental model
+            incomplete, so settlement later feels unexplained. Both are right about
+            different things: it should stay skippable by default (not forced, not
+            pre-selected), but the CHOICE itself needs to be visible in the main flow,
+            not hidden behind text most people will never tap. Skip is the highlighted
+            default either way — nothing changes for someone who just wants to log
+            expenses and settle directly. */}
+        <Text style={styles.sharedMoneyLabel}>SHARED MONEY (OPTIONAL)</Text>
+        <Text style={styles.sharedMoneyHint}>Will everyone pool money into one shared bank first, or just settle up directly later?</Text>
+        <View style={styles.sharedMoneyChoiceRow}>
+          <Chip label="Skip for now" active={!hasTripBank} onPress={() => setHasTripBank(false)} />
+          <Chip label="Set up shared money" active={hasTripBank} onPress={() => setHasTripBank(true)} />
+        </View>
+        {hasTripBank && (
+          <Text style={styles.learnMoreLink} onPress={() => navigation.navigate('HowItWorks')}>How does this work? →</Text>
         )}
       </View>
 
@@ -167,9 +165,9 @@ const makeStyles = (theme) => StyleSheet.create({
   hint: { fontSize: 13, color: theme.inkMute, lineHeight: 19, marginTop: 4 },
   advancedToggle: { marginTop: theme.space.lg, alignSelf: 'flex-start', minHeight: theme.a11y.minTouchTarget, justifyContent: 'center' },
   advancedToggleText: { fontSize: 13.5, fontWeight: theme.weight.semibold, color: theme.brandDeep },
-  bankToggleRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.line, padding: theme.space.md, marginTop: theme.space.lg, gap: theme.space.md },
-  bankToggleLabel: { fontSize: 15, fontWeight: theme.weight.semibold, color: theme.ink },
-  bankToggleHint: { fontSize: 12.5, color: theme.inkMute, marginTop: 2, lineHeight: 17 },
-  learnMoreLink: { fontSize: 12.5, color: theme.brandDeep, fontWeight: theme.weight.semibold, marginTop: theme.space.xs },
+  sharedMoneyLabel: { fontSize: 13, color: theme.inkMute, marginTop: theme.space.xl, textTransform: 'uppercase', letterSpacing: 0.4 },
+  sharedMoneyHint: { fontSize: 12.5, color: theme.inkMute, marginTop: 4, lineHeight: 17 },
+  sharedMoneyChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: theme.space.sm },
+  learnMoreLink: { fontSize: 12.5, color: theme.brandDeep, fontWeight: theme.weight.semibold, marginTop: theme.space.sm },
   footer: { padding: 20 },
 });

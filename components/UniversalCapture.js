@@ -38,6 +38,7 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
   const [payer, setPayer] = useState(null);
   const [fundingSource, setFundingSource] = useState('personal');
   const [category, setCategory] = useState(null);
+  const [customCategory, setCustomCategory] = useState('');
   const [splitParticipants, setSplitParticipants] = useState(null); // null = everyone (default, unchanged behavior)
   const [contribTraveler, setContribTraveler] = useState(null);
   const [currency, setCurrency] = useState(baseCurrency);
@@ -49,7 +50,7 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
 
   const reset = () => {
     setActiveAction(null); setText(''); setAmount(''); setPayer(null);
-    setFundingSource('personal'); setCategory(null); setContribTraveler(null);
+    setFundingSource('personal'); setCategory(null); setCustomCategory(''); setContribTraveler(null);
     setCurrency(baseCurrency); setFxRate(''); setShowCurrency(false); setSplitParticipants(null);
   };
   const close = () => { setOpen(false); reset(); };
@@ -85,8 +86,11 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
       if (!amt || !payer) return;
       if (isForeign && !parseFloat(fxRate)) return;
       if (splitParticipants && splitParticipants.length === 0) return; // must split among at least one person
+      // "Other" needs its own label — saving it as the literal string "Other" with no
+      // way to say what it actually was is exactly what made this feel stuck/incomplete.
+      const finalCategory = category === 'Other' ? (customCategory.trim() || 'Other') : category;
       await addExpense(tripId, payer, amt, text.trim() || null, {
-        currency, fxRate: isForeign ? parseFloat(fxRate) : 1, category, fundingSource,
+        currency, fxRate: isForeign ? parseFloat(fxRate) : 1, category: finalCategory, fundingSource,
         participants: splitParticipants || undefined,
       });
     } else if (activeAction === 'contribution') {
@@ -185,6 +189,16 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
                     <Chip key={c} label={c} active={category === c} onPress={() => setCategory(c)} />
                   ))}
                 </View>
+                {category === 'Other' && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="What kind of expense?"
+                    placeholderTextColor={theme.inkMute}
+                    value={customCategory}
+                    onChangeText={setCustomCategory}
+                    autoFocus
+                  />
+                )}
 
                 {travelers.length > 1 && (
                   <>

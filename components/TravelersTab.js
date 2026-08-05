@@ -77,15 +77,23 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
   // who's personally out that money, since the Trip Bank covered it. This was previously
   // contributions-only, understating anyone who mostly paid personally rather than into
   // a shared pool — a real gap, not a display choice, now fixed.
-  const paidByName = useMemo(() => {
-    const totals = { ...contributedByName };
+  const spentByName = useMemo(() => {
+    const totals = {};
     (expenses || []).forEach((e) => {
       if (e.funding_source === 'personal') {
         totals[e.paid_by] = (totals[e.paid_by] || 0) + e.amount * e.fx_rate;
       }
     });
     return totals;
-  }, [contributedByName, expenses]);
+  }, [expenses]);
+
+  const paidByName = useMemo(() => {
+    const totals = { ...contributedByName };
+    Object.entries(spentByName).forEach(([name, amt]) => {
+      totals[name] = (totals[name] || 0) + amt;
+    });
+    return totals;
+  }, [contributedByName, spentByName]);
 
   // Net balance across both the Trip Bank and personal-expense settlements — the one
   // number that answers "is this person ahead or behind" without the reader needing to
@@ -137,7 +145,10 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
                 </View>
                 <TouchableOpacity style={{ flex: 1 }} onPress={() => setEditing({ id: item.id, name: item.name })}>
                   <Text style={styles.memberName}>{item.name}</Text>
-                  <Text style={styles.memberSub}>Paid {cs}{(paidByName[item.name] || 0).toFixed(0)}</Text>
+                  <Text style={styles.memberSub}>
+                    Paid {cs}{(paidByName[item.name] || 0).toFixed(0)}
+                    {spentByName[item.name] > 0 ? ` · Spent ${cs}${spentByName[item.name].toFixed(0)}` : ''}
+                  </Text>
                 </TouchableOpacity>
                 <View style={styles.memberRight}>
                   <Text style={[styles.balanceText, bal < 0 && styles.negative]}>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme, Animated, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 // ---- Currency symbol lookup: falls back to the code itself + a space for anything not
@@ -373,12 +373,17 @@ export function BottomSheet({ visible, onClose, children }) {
   const styles = useStyles();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
-        <View style={styles.sheetCard} onStartShouldSetResponder={() => true}>
-          <View style={styles.sheetHandle} />
-          {children}
-        </View>
-      </TouchableOpacity>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
+          <View style={styles.sheetCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.sheetHandle} />
+            {children}
+          </View>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

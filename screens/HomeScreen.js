@@ -6,7 +6,9 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDB, computeTripData, getDrafts } from '../db';
+import { getDB, computeTripData, getDrafts, getDestinationInsights } from '../db';
+import { getTripCoverTheme } from '../tripTheme';
+import { LinearGradient } from 'expo-linear-gradient';
 import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Container, useTheme } from '../components/UI';
 
 // HOOK: this is the screen the organizer opens dozens of times per trip, often one-handed,
@@ -38,6 +40,7 @@ export default function HomeScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [trips, setTrips] = useState([]);
   const [current, setCurrent] = useState(null);
+  const [insights, setInsights] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [homeTab, setHomeTab] = useState('overview');
 
@@ -55,6 +58,7 @@ export default function HomeScreen({ navigation }) {
       } else {
         setCurrent(null);
       }
+      setInsights(await getDestinationInsights());
       setLoadError(null);
     } catch (err) {
       setLoadError(err?.message || 'Could not load your trips.');
@@ -115,28 +119,36 @@ export default function HomeScreen({ navigation }) {
             ) : homeTab === 'overview' ? (
               <>
                 {current ? (
-                  <TouchableOpacity activeOpacity={0.85} onPress={() => openTrip(current)} style={styles.heroCard}>
-                    <View style={styles.heroTopRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.heroLabel}>Current trip</Text>
-                        <Text style={styles.heroTitle}>{current.name}</Text>
+                  <TouchableOpacity activeOpacity={0.85} onPress={() => openTrip(current)}>
+                    <LinearGradient
+                      colors={getTripCoverTheme(current.name).colors}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.heroCard}
+                    >
+                      <Text style={styles.heroWatermark}>{getTripCoverTheme(current.name).emoji}</Text>
+                      <View style={styles.heroTopRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.heroLabel}>Current trip</Text>
+                          <Text style={styles.heroTitle}>{current.name}</Text>
+                        </View>
+                        <View style={styles.activePill}><Text style={styles.activePillText}>Active</Text></View>
                       </View>
-                      <View style={styles.activePill}><Text style={styles.activePillText}>Active</Text></View>
-                    </View>
-                    <View style={styles.heroStatsRow}>
-                      <View>
-                        <Text style={styles.heroStatLabel}>Cash left</Text>
-                        <Text style={styles.heroStatValue}>{currencySymbol(current.baseCurrency)}{Math.round(current.cashLeft ?? 0).toLocaleString()}</Text>
+                      <View style={styles.heroStatsRow}>
+                        <View>
+                          <Text style={styles.heroStatLabel}>Cash left</Text>
+                          <Text style={styles.heroStatValue}>{currencySymbol(current.baseCurrency)}{Math.round(current.cashLeft ?? 0).toLocaleString()}</Text>
+                        </View>
+                        <View>
+                          <Text style={styles.heroStatLabel}>Pending drafts</Text>
+                          <Text style={styles.heroStatValue}>{current.pendingDrafts}</Text>
+                        </View>
+                        <View style={styles.heroViewBtn}>
+                          <Text style={styles.heroViewText}>View trip</Text>
+                          <Feather name="arrow-right" size={14} color="#fff" />
+                        </View>
                       </View>
-                      <View>
-                        <Text style={styles.heroStatLabel}>Pending drafts</Text>
-                        <Text style={styles.heroStatValue}>{current.pendingDrafts}</Text>
-                      </View>
-                      <View style={styles.heroViewBtn}>
-                        <Text style={styles.heroViewText}>View trip</Text>
-                        <Feather name="arrow-right" size={14} color="#fff" />
-                      </View>
-                    </View>
+                    </LinearGradient>
                   </TouchableOpacity>
                 ) : (
                   <EmptyState
@@ -152,6 +164,24 @@ export default function HomeScreen({ navigation }) {
                     <Feather name="chevron-right" size={16} color={theme.brandDeep} />
                   </TouchableOpacity>
                 )}
+
+                {/* Real insights, not fabricated ones — only appears once a place has
+                    actually been visited 2+ times, computed from real trip/expense/
+                    traveler data via getDestinationInsights, never invented. */}
+                {insights.map((ins) => (
+                  <View key={ins.place} style={styles.insightCard}>
+                    <Text style={styles.insightEmoji}>{getTripCoverTheme(ins.place).emoji}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.insightTitle}>
+                        You've been to {ins.place} {ins.visitCount} times
+                      </Text>
+                      <Text style={styles.insightBody}>
+                        Spent {currencySymbol(ins.baseCurrency)}{Math.round(ins.totalSpent).toLocaleString()} total
+                        {ins.topCompanions.length > 0 ? ` · usually with ${ins.topCompanions.join(', ')}` : ''}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
               </>
             ) : (
               <>
@@ -236,8 +266,9 @@ const makeStyles = (theme) => StyleSheet.create({
   name: { fontSize: theme.type.hero, fontWeight: theme.weight.semibold, color: theme.ink, marginTop: 2, letterSpacing: -0.3 },
   searchBtn: { width: theme.a11y.minTouchTarget, height: theme.a11y.minTouchTarget, alignItems: 'center', justifyContent: 'center' },
   heroCard: {
-    backgroundColor: theme.brandDeep, borderRadius: theme.radius.xl, padding: theme.space.xl,
+    borderRadius: theme.radius.xl, padding: theme.space.xl, overflow: 'hidden', position: 'relative',
   },
+  heroWatermark: { position: 'absolute', end: -6, top: -10, fontSize: 90, opacity: 0.18 },
   heroTopRow: { flexDirection: 'row', alignItems: 'flex-start' },
   activePill: { backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   activePillText: { color: '#fff', fontSize: 11, fontWeight: theme.weight.semibold },
@@ -249,6 +280,10 @@ const makeStyles = (theme) => StyleSheet.create({
   heroViewBtn: { flexDirection: 'row', alignItems: 'center', marginStart: 'auto', gap: 4, backgroundColor: 'rgba(255,255,255,0.16)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.sm },
   heroViewText: { color: '#fff', fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
   viewAllRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: theme.space.xl, minHeight: theme.a11y.minTouchTarget },
+  insightCard: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, padding: theme.space.md, marginTop: theme.space.md },
+  insightEmoji: { fontSize: 26 },
+  insightTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
+  insightBody: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2, lineHeight: 16 },
   viewAllText: { color: theme.brandDeep, fontWeight: theme.weight.semibold, fontSize: theme.type.body },
   listCard: {
     backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line,
