@@ -38,7 +38,7 @@ export async function pickAndAddDocument(tripId) {
     id, tripId, file.name, destUri, file.mimeType || null, Date.now()
   );
   const ts = Date.now();
-  await logTimelineEvent({ tripId, type: 'document', title: `Document attached: ${file.name}`, timestamp: ts, idSuffix: '_t' });
+  await logTimelineEvent({ tripId, type: 'document', title: `Document attached: ${file.name}`, timestamp: ts, idSuffix: '_t', metadata: { id, name: file.name } });
   return id;
 }
 
@@ -136,5 +136,39 @@ export async function exportTripPDF(tripId, tripName) {
   const { uri } = await Print.printToFileAsync({ html });
   const available = await Sharing.isAvailableAsync();
   if (available) await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `${tripName} — TripNest Export` });
+  return uri;
+}
+
+// CSV export — the format every spreadsheet-comfortable organizer actually wants for
+// reconciling against their own records, and the one export format every competitor
+// reviewed offers that TripNest didn't. Expenses only (not the whole trip snapshot) since
+// that's the table people actually paste into Excel/Sheets to double-check.
+function csvEscape(value) {
+  const s = String(value ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export async function exportTripCSV(tripId, tripName) {
+  const db = await getDB();
+  const expenses = await db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at ASC', tripId);
+
+  const header = ['Date', 'Paid By', 'Amount', 'Currency', 'Category', 'Funding Source', 'Description'];
+  const rows = expenses.map((e) => [
+    new Date(e.created_at).toISOString().slice(0, 10),
+    e.paid_by,
+    e.amount,
+    e.currency,
+    e.category || '',
+    e.funding_source === 'bank' ? 'Trip Bank' : 'Personal',
+    e.description || '',
+  ]);
+  const csv = [header, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
+
+  const fileName = `${tripName.replace(/[^a-z0-9]/gi, '_')}_expenses.csv`;
+  const uri = FileSystem.documentDirectory + fileName;
+  await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+
+  const available = await Sharing.isAvailableAsync();
+  if (available) await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: `${tripName} — Expenses CSV` });
   return uri;
 }

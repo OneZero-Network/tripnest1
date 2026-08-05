@@ -109,7 +109,7 @@ export default function DraftsScreen({ route, navigation }) {
             <SectionHeader title={s.label} />
             <LedgerList>
               {s.items.map((d, i) => (
-                <LedgerRow key={d.id} isLast={i === s.items.length - 1}>
+                <LedgerRow key={d.id} icon={d.draft_type} isLast={i === s.items.length - 1}>
                   <Text style={styles.draftType}>{TYPES.find(t => t.key === d.draft_type)?.label}</Text>
                   <Text style={styles.draftText}>{draftSummary(d)}</Text>
                   <View style={styles.draftActions}>

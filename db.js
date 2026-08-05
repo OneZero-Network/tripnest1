@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { scheduleItineraryNotification, cancelItineraryNotification } from './notifications';
 
 let db;
 
@@ -78,6 +79,45 @@ const MIGRATIONS = [
     // things (pool spend vs. personal advances) into one bucket. Existing rows default to
     // 'personal' since that's what every expense in this app has meant until now.
     sql: `ALTER TABLE expenses ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'personal';`,
+  },
+  {
+    name: '015_add_trip_has_bank',
+    // Whether this trip even has a shared pool — defaults to 1 (on) so every existing
+    // trip keeps behaving exactly as before. New trips can opt out at creation; when off,
+    // "Paid from: Trip Bank" isn't offered on Add Expense and the Trip Bank Pool card
+    // doesn't show on Members, since there's nothing there to show.
+    sql: `ALTER TABLE trips ADD COLUMN has_trip_bank INTEGER NOT NULL DEFAULT 1;`,
+  },
+  {
+    name: '016_add_app_meta',
+    // A tiny key-value table for app-level flags that aren't about any one trip — first-run
+    // onboarding being the initial (and so far only) use. Deliberately not reusing "zero
+    // trips exist" as a proxy for "never onboarded": a user who deletes every trip would
+    // wrongly see onboarding again under that logic.
+    sql: `CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT);`,
+  },
+  {
+    name: '017_add_itinerary_notification_id',
+    // Links a plan item to the local notification scheduled for it, so deleting the item
+    // can cancel the notification instead of leaving an orphaned reminder that fires for
+    // a plan the organizer already removed.
+    sql: `ALTER TABLE itinerary_items ADD COLUMN notification_id TEXT;`,
+  },
+  {
+    name: '018_add_expense_splits',
+    // Real correctness gap being closed: every expense used to split equally among EVERY
+    // traveler on the trip, even ones who didn't participate in that specific expense —
+    // "three people got appetizers, two got dessert" had no way to be represented. Absence
+    // of rows here for a given expense means "equal split among all current travelers,"
+    // exactly matching the old behavior — so every expense recorded before this migration
+    // keeps computing exactly the same settlement it always did. Presence of rows means
+    // "only these specific people split this one," each for their explicit share.
+    sql: `CREATE TABLE IF NOT EXISTS expense_splits (
+      id TEXT PRIMARY KEY,
+      expense_id TEXT NOT NULL,
+      traveler_name TEXT NOT NULL,
+      share_amount REAL NOT NULL
+    );`,
   },
 ];
 
@@ -223,6 +263,17 @@ async function getTripBaseCurrency(tripId) {
   return trip?.base_currency || 'INR';
 }
 
+// ---- App-level flags (not tied to any one trip) ----
+export async function getAppMeta(key) {
+  const db = await getDB();
+  const row = await db.getFirstAsync('SELECT value FROM app_meta WHERE key = ?', key);
+  return row?.value ?? null;
+}
+export async function setAppMeta(key, value) {
+  const db = await getDB();
+  await db.runAsync('INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value);
+}
+
 export async function setBaseCurrency(tripId, currency) {
   const db = await getDB();
   await db.runAsync('UPDATE trips SET base_currency = ? WHERE id = ?', currency, tripId);
@@ -244,9 +295,32 @@ export async function addExpense(tripId, paidBy, amount, description, opts = {})
     'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, category, funding_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id, tripId, paidBy, amount, description, currency, fxRate, category, fundingSource, ts
   );
+
+  // Optional explicit participant list — who actually shares THIS expense, not
+  // necessarily every traveler on the trip. `participants` is an array of traveler names;
+  // splits equally among exactly those names. Omit entirely for the old/default behavior
+  // (equal split among every current traveler, computed dynamically at settlement time,
+  // not stored — so it stays correct even if travelers are added or removed later).
+  if (opts.participants && opts.participants.length > 0) {
+    const baseAmount = amount * fxRate;
+    const perPerson = +(baseAmount / opts.participants.length).toFixed(2);
+    for (const name of opts.participants) {
+      const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
+      await db.runAsync(
+        'INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount) VALUES (?, ?, ?, ?)',
+        splitId, id, name, perPerson
+      );
+    }
+  }
+
   const label = currency === baseCurrency ? `${amount}` : `${amount} ${currency}`;
   const sourceLabel = fundingSource === 'bank' ? ' from the Trip Bank' : '';
-  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${description}${sourceLabel}`, timestamp: ts, idSuffix: '_t' });
+  // The timeline entry needs some noun even when description is blank — falls back to
+  // the category (or "an expense") for that one line, but this is display-only and never
+  // gets written back into the stored `description`, which is what caused the
+  // "Food · Food · Personal" duplicate in the row list.
+  const timelineNoun = description || category || 'an expense';
+  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${timelineNoun}${sourceLabel}`, timestamp: ts, idSuffix: '_t', metadata: { id, paidBy, amount, currency, category } });
   return id;
 }
 
@@ -281,7 +355,7 @@ export async function addNote(tripId, text) {
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
   const ts = Date.now();
   await db.runAsync('INSERT INTO notes (id, trip_id, text, created_at) VALUES (?, ?, ?, ?)', id, tripId, text, ts);
-  await logTimelineEvent({ tripId, type: 'note', title: `Note added: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`, timestamp: ts, idSuffix: '_t' });
+  await logTimelineEvent({ tripId, type: 'note', title: `Note added: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`, timestamp: ts, idSuffix: '_t', metadata: { id } });
   return id;
 }
 
@@ -302,6 +376,27 @@ export async function deleteNote(noteId, tripId) {
 // ---- Safe Mode: pin/unpin + a single fetch for the emergency view ----
 // Toggling reuses the existing notes/documents tables (pinned_emergency is just a flag on
 // each row) rather than a parallel "emergency contacts" table — an organizer pins whatever
+// ---- Single-record lookups: what makes an Activity feed row tappable rather than just
+// informational text. Without these, a timeline entry has a title string and nothing
+// else — no way to open, edit, or delete the thing it's describing. ----
+export async function getNoteById(id) {
+  const db = await getDB();
+  return db.getFirstAsync('SELECT * FROM notes WHERE id = ?', id);
+}
+export async function getDocumentById(id) {
+  const db = await getDB();
+  return db.getFirstAsync('SELECT * FROM documents WHERE id = ?', id);
+}
+export async function getExpenseById(id) {
+  const db = await getDB();
+  return db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', id);
+}
+
+export async function getExpenseSplits(expenseId) {
+  const db = await getDB();
+  return db.getAllAsync('SELECT * FROM expense_splits WHERE expense_id = ?', expenseId);
+}
+
 // note or document already has the info (passport photo, "Embassy: +91..." note) instead
 // of re-entering it somewhere else.
 export async function togglePinnedDocument(docId) {
@@ -399,14 +494,84 @@ export async function computeTripData(tripId) {
   return { finance, today };
 }
 
+// ---- Notification feed: a real aggregation across every trip, not fabricated content.
+// Home's "Notifications" tab shows exactly this — pending drafts, outstanding
+// settlements, and plan items coming up in the next 24 hours, for every active trip.
+// Nothing here is invented; it's the same data Settlement/Drafts/Cockpit already compute,
+// just gathered from every trip in one pass instead of one trip at a time. ----
+export async function getNotificationFeed() {
+  const db = await getDB();
+  const trips = await db.getAllAsync("SELECT * FROM trips WHERE status = 'active' ORDER BY created_at DESC");
+  const items = [];
+
+  for (const trip of trips) {
+    const drafts = await getDrafts(trip.id);
+    if (drafts.length > 0) {
+      items.push({
+        id: `draft_${trip.id}`,
+        tripId: trip.id,
+        tripName: trip.name,
+        icon: 'inbox',
+        tone: 'accent',
+        message: `${drafts.length} pending draft${drafts.length === 1 ? '' : 's'} in ${trip.name}`,
+        sortKey: 2,
+      });
+    }
+
+    const { finance, today } = await computeTripData(trip.id);
+    const bankTx = finance.bankSettlement?.transactions || [];
+    const personalTx = finance.liveForecast?.transactions || [];
+    const outstandingCount = bankTx.length + personalTx.length;
+    if (outstandingCount > 0) {
+      items.push({
+        id: `settlement_${trip.id}`,
+        tripId: trip.id,
+        tripName: trip.name,
+        icon: 'check-circle',
+        tone: 'warn',
+        message: `${outstandingCount} outstanding settlement${outstandingCount === 1 ? '' : 's'} in ${trip.name}`,
+        sortKey: 1,
+      });
+    }
+
+    const soon = Date.now() + 24 * 60 * 60 * 1000;
+    (today.todaysSegments || []).forEach((seg) => {
+      if (seg.scheduled_at >= Date.now() && seg.scheduled_at <= soon) {
+        items.push({
+          id: `plan_${seg.id}`,
+          tripId: trip.id,
+          tripName: trip.name,
+          icon: 'calendar',
+          tone: 'brand',
+          message: `${seg.title} coming up in ${trip.name}`,
+          timestamp: seg.scheduled_at,
+          sortKey: 0,
+        });
+      }
+    });
+  }
+
+  // Upcoming plan items first (time-sensitive), then settlements, then drafts —
+  // roughly "what needs action soonest" rather than alphabetical or by trip.
+  return items.sort((a, b) => a.sortKey - b.sortKey || (a.timestamp || 0) - (b.timestamp || 0));
+}
+
 // ---- Itinerary items: scheduled trip items (source-of-truth, not derived) ----
 export async function addItineraryItem(tripId, title, scheduledAt, location) {
   const db = await getDB();
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
   const ts = Date.now();
+  // Only schedule a reminder for something actually in the future — a plan item logged
+  // for earlier today (common when back-filling a day's activities) shouldn't queue a
+  // notification that fires the instant it's saved.
+  let notificationId = null;
+  if (scheduledAt > Date.now()) {
+    const trip = await db.getFirstAsync('SELECT name FROM trips WHERE id = ?', tripId);
+    notificationId = await scheduleItineraryNotification(trip?.name || 'Your trip', title, location, scheduledAt);
+  }
   await db.runAsync(
-    'INSERT INTO itinerary_items (id, trip_id, title, location, scheduled_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    id, tripId, title, location || null, scheduledAt, ts
+    'INSERT INTO itinerary_items (id, trip_id, title, location, scheduled_at, created_at, notification_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, title, location || null, scheduledAt, ts, notificationId
   );
   await logTimelineEvent({ tripId, type: 'itinerary', title: `Planned: ${title}`, timestamp: ts, idSuffix: '_t' });
   return id;
@@ -414,7 +579,9 @@ export async function addItineraryItem(tripId, title, scheduledAt, location) {
 
 export async function deleteItineraryItem(id, tripId, title) {
   const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT notification_id FROM itinerary_items WHERE id = ?', id);
   await db.runAsync('DELETE FROM itinerary_items WHERE id = ?', id);
+  if (existing?.notification_id) await cancelItineraryNotification(existing.notification_id);
   const ts = Date.now();
   await logTimelineEvent({ tripId, type: 'itinerary', title: `Plan removed: ${title}`, timestamp: ts, idSuffix: '_ds' });
 }
@@ -435,12 +602,19 @@ export async function computeTodayView(tripId, precomputedSettlement = null) {
     'SELECT * FROM timeline WHERE trip_id = ? ORDER BY created_at DESC LIMIT 5', tripId
   );
   const { balances } = precomputedSettlement ?? await computeSettlement(tripId);
-  const spentRow = await db.getFirstAsync('SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ?', tripId);
+  // Was `totalSpent` here before — an all-time sum that also ignored fx_rate (wrong for
+  // any foreign-currency expense) and, checked against every screen in the app, was never
+  // actually read anywhere. Replaced with a genuine "spent today" figure, fx-adjusted,
+  // which is what the Overview dashboard actually needs.
+  const spentTodayRow = await db.getFirstAsync(
+    'SELECT COALESCE(SUM(amount * fx_rate),0) as total FROM expenses WHERE trip_id = ? AND created_at BETWEEN ? AND ?',
+    tripId, dayStart.getTime(), dayEnd.getTime()
+  );
 
   return {
     todaysSegments,
     recentActivity,
-    totalSpent: spentRow.total,
+    spentToday: spentTodayRow.total,
     balances,
   };
 }

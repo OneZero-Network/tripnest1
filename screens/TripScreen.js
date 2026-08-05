@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager } from 'react-native';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -7,26 +7,30 @@ import { Feather } from '@expo/vector-icons';
 import { getDB, computeTripData, getDrafts } from '../db';
 import CockpitCard from '../components/CockpitCard';
 import TravelersTab from '../components/TravelersTab';
-import ExpensesTab from '../components/ExpensesTab';
-import NotesTab from '../components/NotesTab';
-import DocumentsTab from '../components/DocumentsTab';
 import TimelineTab from '../components/TimelineTab';
 import FinanceTab from '../components/FinanceTab';
+import SettlementTab from '../components/SettlementTab';
+import OverviewTab from '../components/OverviewTab';
+import ExpensesTab from '../components/ExpensesTab';
 import UniversalCapture from '../components/UniversalCapture';
+import ActivityItemSheet from '../components/ActivityItemSheet';
 import SafeModeCard from '../components/SafeModeCard';
 import { ErrorState, Container, useTheme } from '../components/UI';
 
-// Each tab paired with its own icon — consistent Feather icon language, and the icon
-// gives the tab a second, faster-to-scan identity beyond just its label text.
+// Five areas, each answering exactly one question — per the "think in questions, not
+// screens" review: Overview ("how's the trip going"), Members ("how's each traveler
+// doing"), Expenses ("what was spent"), Activity ("what happened"), Settle ("what should
+// we do now"). Advanced deliberately isn't here anymore — it's still real and still
+// reachable (a link from Settle), just not a tab everyone has to scroll past to get to
+// the four things they actually came here for.
 const TABS = [
-  { key: 'Travelers', icon: 'users' },
+  { key: 'Overview', icon: 'home' },
+  { key: 'Members', icon: 'users' },
   { key: 'Expenses', icon: 'dollar-sign' },
-  { key: 'Notes', icon: 'file-text' },
-  { key: 'Documents', icon: 'paperclip' },
-  { key: 'Timeline', icon: 'clock' },
-  { key: 'Finance', icon: 'pie-chart' },
+  { key: 'Activity', icon: 'activity' },
+  { key: 'Settle', icon: 'check-circle' },
 ];
-const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [] }, tripStatus: 'active' };
+const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, hasTripBank: true, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [] }, tripStatus: 'active' };
 
 // TripScreen is an orchestrator: it owns the trip-wide data fetch and tab selection,
 // then hands each tab its slice of data plus a single onChanged() refresh callback.
@@ -36,7 +40,21 @@ export default function TripScreen({ route, navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId, tripName, openSafeMode } = route.params;
-  const [tab, setTab] = useState('Expenses');
+  const [tab, setTab] = useState('Overview');
+
+  // A subtle cross-fade/resize when switching tabs — cheap (one built-in RN API call,
+  // no new dependency) and exactly the "small transitions when switching tabs" this
+  // review asked for. Android needs this experimental flag explicitly enabled; iOS and
+  // the New Architecture support it without one, so the guard is harmless there.
+  if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+  const changeTab = (key) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setTab(key);
+  };
+  const [selectedActivityEvent, setSelectedActivityEvent] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Swipe left/right between tabs. Deliberately conservative about claiming the gesture —
   // only takes over once horizontal movement clearly dominates vertical (2:1 ratio, 20px
@@ -44,7 +62,7 @@ export default function TripScreen({ route, navigation }) {
   const swipeTab = (direction) => {
     const idx = TABS.findIndex((t) => t.key === tab);
     const nextIdx = idx + direction;
-    if (nextIdx >= 0 && nextIdx < TABS.length) setTab(TABS[nextIdx].key);
+    if (nextIdx >= 0 && nextIdx < TABS.length) changeTab(TABS[nextIdx].key);
   };
   const panResponder = useMemo(
     () =>
@@ -60,8 +78,6 @@ export default function TripScreen({ route, navigation }) {
   );
   const [travelers, setTravelers] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [notes, setNotes] = useState([]);
-  const [documents, setDocuments] = useState([]);
   const [timeline, setTimeline] = useState([]);
   const [finance, setFinance] = useState(EMPTY_FINANCE);
   const [today, setToday] = useState(null);
@@ -72,23 +88,20 @@ export default function TripScreen({ route, navigation }) {
   const loadAll = async () => {
     try {
       const db = await getDB();
-      // These 7 reads are all independent — none depends on another's result — so they
-      // were serialized for no reason. Running them concurrently cuts wall-clock load time
-      // by avoiding paying the JS-bridge round-trip cost 7 times in sequence.
-      const [travelersRows, expensesRows, notesRows, documentsRows, timelineRows, tripData, drafts] = await Promise.all([
+      // Expenses is back as its own fetch — the Expenses tab returned per this review's
+      // 5-area structure, as a dedicated "what was spent" browsing lens distinct from
+      // Activity's broader feed. Still 4 independent reads run concurrently, same reasoning
+      // as before: no read here depends on another's result.
+      const [travelersRows, timelineRows, expensesRows, tripData, drafts] = await Promise.all([
         db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId),
-        db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at DESC', tripId),
-        db.getAllAsync('SELECT * FROM notes WHERE trip_id = ? ORDER BY created_at DESC', tripId),
-        db.getAllAsync('SELECT * FROM documents WHERE trip_id = ? ORDER BY created_at DESC', tripId),
         db.getAllAsync('SELECT * FROM timeline WHERE trip_id = ? ORDER BY created_at DESC', tripId),
+        db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at DESC', tripId),
         computeTripData(tripId),
         getDrafts(tripId),
       ]);
       setTravelers(travelersRows);
-      setExpenses(expensesRows);
-      setNotes(notesRows);
-      setDocuments(documentsRows);
       setTimeline(timelineRows);
+      setExpenses(expensesRows);
       setFinance(tripData.finance);
       setToday(tripData.today);
       setDraftCount(drafts.length);
@@ -125,9 +138,11 @@ export default function TripScreen({ route, navigation }) {
           </TouchableOpacity>
           <Text style={styles.title} numberOfLines={1}>{tripName}</Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search', { tripId })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search this trip" accessibilityRole="button">
-              <Feather name="search" size={18} color={theme.inkSoft} />
-            </TouchableOpacity>
+            {timeline.length >= 10 && (
+              <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search', { tripId })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search this trip" accessibilityRole="button">
+                <Feather name="search" size={18} color={theme.inkSoft} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Drafts', { tripId })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Drafts" accessibilityRole="button">
               <Feather name="inbox" size={18} color={theme.inkSoft} />
             </TouchableOpacity>
@@ -145,7 +160,7 @@ export default function TripScreen({ route, navigation }) {
         <View style={styles.tabsRow}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingEnd: 16 }}>
             {TABS.map((t) => (
-              <TouchableOpacity key={t.key} onPress={() => setTab(t.key)} style={[styles.tab, tab === t.key && styles.tabActive]}>
+              <TouchableOpacity key={t.key} onPress={() => changeTab(t.key)} style={[styles.tab, tab === t.key && styles.tabActive]}>
                 <Feather name={t.icon} size={14} color={tab === t.key ? theme.ink : theme.inkMute} style={{ marginEnd: 6 }} />
                 <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.key}</Text>
               </TouchableOpacity>
@@ -166,26 +181,49 @@ export default function TripScreen({ route, navigation }) {
               <>
                 <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} tripStatus={finance.tripStatus} pendingDraftsCount={draftCount} baseCurrency={finance.baseCurrency} onChanged={loadAll} />
 
-                {tab === 'Travelers' && <TravelersTab tripId={tripId} travelers={travelers} finance={finance} onChanged={loadAll} />}
-                {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} travelers={travelers} baseCurrency={finance.baseCurrency} onChanged={loadAll} />}
-                {tab === 'Notes' && <NotesTab tripId={tripId} notes={notes} onChanged={loadAll} />}
-                {tab === 'Documents' && <DocumentsTab tripId={tripId} documents={documents} onChanged={loadAll} />}
-                {tab === 'Timeline' && <TimelineTab timeline={timeline} />}
-                {tab === 'Finance' && <FinanceTab tripId={tripId} finance={finance} onChanged={loadAll} />}
+                {tab === 'Members' && <TravelersTab tripId={tripId} travelers={travelers} expenses={expenses} finance={finance} onChanged={loadAll} />}
+                {tab === 'Expenses' && <ExpensesTab expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
+                {tab === 'Activity' && <TimelineTab timeline={timeline} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
+                {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} tripName={tripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} />}
+                {tab === 'Settle' && <SettlementTab tripId={tripId} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
               </>
             )}
           </Container>
         </ScrollView>
         </View>
 
-        <UniversalCapture tripId={tripId} navigation={navigation} onChanged={loadAll} />
+        <UniversalCapture tripId={tripId} navigation={navigation} travelers={travelers} baseCurrency={finance.baseCurrency} hasTripBank={finance.hasTripBank} onChanged={loadAll} />
       </View>
       {safeMode && <SafeModeCard tripId={tripId} tripName={tripName} onClose={() => setSafeMode(false)} />}
+      {showAdvanced && (
+        <View style={styles.advancedOverlay}>
+          <View style={styles.advancedHeaderRow}>
+            <TouchableOpacity onPress={() => setShowAdvanced(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Feather name="arrow-left" size={22} color={theme.ink} />
+            </TouchableOpacity>
+            <Text style={styles.advancedTitle}>Advanced</Text>
+            <View style={{ width: 22 }} />
+          </View>
+          <View style={{ flex: 1, paddingHorizontal: theme.space.lg }}>
+            <FinanceTab tripId={tripId} finance={finance} onChanged={loadAll} />
+          </View>
+        </View>
+      )}
+      <ActivityItemSheet
+        tripId={tripId}
+        event={selectedActivityEvent}
+        baseCurrency={finance.baseCurrency}
+        onClose={() => setSelectedActivityEvent(null)}
+        onChanged={loadAll}
+      />
     </SafeAreaView>
   );
 }
 
 const makeStyles = (theme) => StyleSheet.create({
+  advancedOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.bg, zIndex: 40, paddingTop: 56 },
+  advancedHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space.lg, marginBottom: theme.space.md },
+  advancedTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink },
   safe: { flex: 1, backgroundColor: theme.bg },
   container: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: theme.space.md, gap: theme.space.md },

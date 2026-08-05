@@ -6,6 +6,10 @@ import * as QuickActions from 'expo-quick-actions';
 import * as SplashScreenNative from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from './components/UI';
 import SplashScreen from './screens/SplashScreen';
+import WelcomeScreen from './screens/WelcomeScreen';
+import NotificationsScreen from './screens/NotificationsScreen';
+import HowItWorksScreen from './screens/HowItWorksScreen';
+import MoreScreen from './screens/MoreScreen';
 import HomeScreen from './screens/HomeScreen';
 import CreateTripScreen from './screens/CreateTripScreen';
 import TripScreen from './screens/TripScreen';
@@ -74,6 +78,10 @@ function AppInner() {
       <NavigationContainer ref={navigationRef}>
         <Stack.Navigator initialRouteName="Splash" screenOptions={{ headerStyle: { backgroundColor: theme.brandDeep }, headerTintColor: '#fff' }}>
           <Stack.Screen name="Splash" component={SplashScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="HowItWorks" component={HowItWorksScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="More" component={MoreScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
           <Stack.Screen name="CreateTrip" component={CreateTripScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Trip" component={TripScreen} options={{ headerShown: false }} />

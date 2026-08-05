@@ -1,5 +1,5 @@
 import React, {useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
@@ -21,6 +21,8 @@ export default function CreateTripScreen({ navigation }) {
   const [travelers, setTravelers] = useState([]);
   const [saving, setSaving] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState('INR');
+  const [hasTripBank, setHasTripBank] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const addTraveler = () => {
     const trimmed = travelerInput.trim();
@@ -44,7 +46,7 @@ export default function CreateTripScreen({ navigation }) {
     // row with only some of its travelers inserted, with no signal that it happened.
     try {
       await db.withTransactionAsync(async () => {
-        await db.runAsync('INSERT INTO trips (id, name, base_currency, created_at) VALUES (?, ?, ?, ?)', id, name.trim(), baseCurrency, ts);
+        await db.runAsync('INSERT INTO trips (id, name, base_currency, has_trip_bank, created_at) VALUES (?, ?, ?, ?, ?)', id, name.trim(), baseCurrency, hasTripBank ? 1 : 0, ts);
         for (const t of travelers) {
           const tid = String(Date.now()) + Math.random().toString(36).slice(2);
           await db.runAsync('INSERT INTO travelers (id, trip_id, name) VALUES (?, ?, ?)', tid, id, t);
@@ -104,7 +106,7 @@ export default function CreateTripScreen({ navigation }) {
         <FlatList
           data={travelers}
           keyExtractor={(item) => item}
-          style={{ marginTop: 12 }}
+          style={{ marginTop: 12, flexGrow: 0 }}
           renderItem={({ item }) => (
             <View style={styles.travelerChip}>
               <IconBadge type="traveler" size={30} />
@@ -116,6 +118,26 @@ export default function CreateTripScreen({ navigation }) {
           )}
           ListEmptyComponent={<Text style={styles.hint}>You can add yourself and others now, or later from the Travelers tab.</Text>}
         />
+
+        <TouchableOpacity style={styles.advancedToggle} onPress={() => setAdvancedOpen((v) => !v)}>
+          <Text style={styles.advancedToggleText}>{advancedOpen ? '− Advanced options' : '+ Advanced options'}</Text>
+        </TouchableOpacity>
+
+        {advancedOpen && (
+          <View style={styles.bankToggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bankToggleLabel}>Trip Bank (Optional)</Text>
+              <Text style={styles.bankToggleHint}>Off by default — most trips just log expenses and settle directly. Turn this on only if you want to pool money into a shared bank first.</Text>
+              <Text style={styles.learnMoreLink} onPress={() => navigation.navigate('HowItWorks')}>How does this work? →</Text>
+            </View>
+            <Switch
+              value={hasTripBank}
+              onValueChange={setHasTripBank}
+              trackColor={{ false: theme.line, true: theme.brand }}
+              thumbColor="#fff"
+            />
+          </View>
+        )}
       </View>
 
       <View style={styles.footer}>
@@ -143,5 +165,11 @@ const makeStyles = (theme) => StyleSheet.create({
   travelerChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, padding: 10, borderRadius: theme.radius.md, marginBottom: 8, borderWidth: 1, borderColor: theme.line, gap: 10 },
   travelerName: { flex: 1, fontSize: 15, fontWeight: theme.weight.semibold, color: theme.ink },
   hint: { fontSize: 13, color: theme.inkMute, lineHeight: 19, marginTop: 4 },
+  advancedToggle: { marginTop: theme.space.lg, alignSelf: 'flex-start', minHeight: theme.a11y.minTouchTarget, justifyContent: 'center' },
+  advancedToggleText: { fontSize: 13.5, fontWeight: theme.weight.semibold, color: theme.brandDeep },
+  bankToggleRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.line, padding: theme.space.md, marginTop: theme.space.lg, gap: theme.space.md },
+  bankToggleLabel: { fontSize: 15, fontWeight: theme.weight.semibold, color: theme.ink },
+  bankToggleHint: { fontSize: 12.5, color: theme.inkMute, marginTop: 2, lineHeight: 17 },
+  learnMoreLink: { fontSize: 12.5, color: theme.brandDeep, fontWeight: theme.weight.semibold, marginTop: theme.space.xs },
   footer: { padding: 20 },
 });

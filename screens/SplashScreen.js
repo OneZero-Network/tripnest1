@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { getDB } from '../db';
+import { getDB, getAppMeta, setAppMeta } from '../db';
 import * as QuickActions from 'expo-quick-actions';
 import * as SplashScreenNative from 'expo-splash-screen';
 import { useTheme } from '../components/UI';
@@ -39,6 +39,22 @@ export default function SplashScreen({ navigation }) {
         return rows[0] || null;
       })();
       const [, activeTrip] = await Promise.all([minSplash, findActiveTrip]);
+
+      // Onboarding shows exactly once, for a genuinely fresh install — not for anyone
+      // upgrading who already has trip data. If the flag was never set but real trips
+      // already exist (e.g. upgrading from a build before this existed), that's an
+      // existing user, not a first-timer — mark it silently and skip straight past.
+      const onboarded = await getAppMeta('onboarded');
+      if (!onboarded) {
+        const db = await getDB();
+        const anyTrip = await db.getFirstAsync('SELECT id FROM trips LIMIT 1');
+        if (anyTrip) {
+          await setAppMeta('onboarded', '1');
+        } else {
+          navigation.replace('Welcome');
+          return;
+        }
+      }
 
       // Keep the OS shortcut in sync with whichever trip is actually active — cleared
       // entirely if there's none, so the shortcut never points at a stale/closed trip.

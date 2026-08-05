@@ -5,6 +5,10 @@ import { Feather } from '@expo/vector-icons';
 // ---- Currency symbol lookup: falls back to the code itself + a space for anything not
 // in this small common list, rather than guessing at a symbol that might be wrong. ----
 const CURRENCY_SYMBOLS = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', THB: '฿' };
+
+// Shared between Expenses and Activity — people recognize an expense by what it was
+// before who paid for it. One definition, not two copies drifting apart.
+export const CATEGORY_EMOJI = { Food: '🍔', Transport: '🚗', Stay: '🏨', Shopping: '🛍️', Other: '🧾' };
 export function currencySymbol(code) {
   return CURRENCY_SYMBOLS[code] || `${code} `;
 }
@@ -46,7 +50,7 @@ const structuralTokens = {
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
   breakpoints: { tablet: 768 },
   type: {
-    hero: 30, title: 20, heading: 16, body: 15, label: 13, caption: 11.5,
+    hero: 25, title: 20, heading: 16, body: 15, label: 13, caption: 11.5,
   },
   // Weight ceiling: 600 max, everywhere. Nothing in this app should render at 700+ —
   // that was the "everything shouts" problem the design review called out. Body copy is
@@ -159,6 +163,7 @@ const ICON_MAP = {
   expense: 'dollar-sign', note: 'file-text', document: 'paperclip', itinerary: 'calendar',
   traveler: 'user', trip: 'flag', contribution: 'gift', draft: 'inbox',
   search: 'search', share: 'share-2', plan: 'map-pin', check: 'check', add: 'plus',
+  settlement: 'check-circle', refund: 'arrow-down-circle', payOut: 'repeat',
 };
 export function IconBadge({ type, size = 36, tone = 'brand' }) {
   const theme = useTheme();
@@ -482,11 +487,11 @@ const makeStyles = (theme) => StyleSheet.create({
   hero: {
     backgroundColor: theme.brandDeep,
     borderRadius: theme.radius.xl,
-    padding: theme.space.xl,
+    padding: theme.space.lg,
   },
   heroLabel: { color: 'rgba(255,255,255,0.72)', fontSize: theme.type.caption, fontWeight: theme.weight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
-  heroValue: { color: '#fff', fontSize: theme.type.hero, fontWeight: theme.weight.semibold, marginTop: 6, letterSpacing: -0.5 },
-  heroSublabel: { color: 'rgba(255,255,255,0.65)', fontSize: theme.type.label, marginTop: 4 },
+  heroValue: { color: '#fff', fontSize: theme.type.hero, fontWeight: theme.weight.semibold, marginTop: 4, letterSpacing: -0.5 },
+  heroSublabel: { color: 'rgba(255,255,255,0.65)', fontSize: theme.type.label, marginTop: 3 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingHorizontal: 2 },
   sectionHeaderText: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, textTransform: 'uppercase', letterSpacing: 0.4 },
   sectionAction: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.brandDeep },

@@ -2,10 +2,11 @@
   "expo": {
     "name": "tripnest",
     "slug": "tripnest",
+    "scheme": "tripnest",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
@@ -28,6 +29,13 @@
           "backgroundColor": "#0B6169",
           "image": "./assets/icon.png",
           "imageWidth": 120
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0B6169"
         }
       ]
     ]

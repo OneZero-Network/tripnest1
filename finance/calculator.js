@@ -12,6 +12,59 @@ export async function setContributionPerPerson(tripId, amount) {
   await db.runAsync('UPDATE trips SET contribution_per_person = ? WHERE id = ?', amount, tripId);
 }
 
+// ---- Per-expense share computation ----
+// Each expense owes its share to either an explicit set of participants (expense_splits
+// rows — "only these 3 people split this one") or, when none exist, equally to every
+// CURRENT traveler — the original behavior, preserved exactly for every expense recorded
+// before per-expense splitting existed. Mixing both kinds of expense within the same trip
+// is the normal case, not an edge case: most expenses split evenly across everyone, a few
+// don't, and the math below handles that per-expense, not as one flat trip-wide division.
+async function computeExpenseShares(db, expenses, travelerNames) {
+  const paidByPerson = {};
+  const owedByPerson = {};
+  travelerNames.forEach((n) => { paidByPerson[n] = 0; owedByPerson[n] = 0; });
+  const orphanedTotals = {};
+
+  let splitsByExpense = {};
+  const expenseIds = expenses.map((e) => e.id);
+  if (expenseIds.length > 0) {
+    const placeholders = expenseIds.map(() => '?').join(',');
+    const splitRows = await db.getAllAsync(`SELECT * FROM expense_splits WHERE expense_id IN (${placeholders})`, ...expenseIds);
+    splitRows.forEach((r) => {
+      if (!splitsByExpense[r.expense_id]) splitsByExpense[r.expense_id] = [];
+      splitsByExpense[r.expense_id].push(r);
+    });
+  }
+
+  expenses.forEach((e) => {
+    const baseAmt = e.amount * e.fx_rate;
+    if (travelerNames.has(e.paid_by)) {
+      paidByPerson[e.paid_by] += baseAmt;
+    } else {
+      // An expense paid by someone not in the current travelers list (stale data from
+      // before the payer field was locked to real travelers, or a traveler removed after
+      // the fact) has nowhere to go in the balance math — silently dropping that money
+      // would make the settlement wrong with no sign it happened, which is exactly what
+      // produced "all settled up" while every real traveler still showed a negative
+      // balance. Tracked here and surfaced to the UI instead of swallowed.
+      orphanedTotals[e.paid_by] = (orphanedTotals[e.paid_by] || 0) + baseAmt;
+    }
+
+    const explicitSplits = splitsByExpense[e.id];
+    if (explicitSplits && explicitSplits.length > 0) {
+      explicitSplits.forEach((s) => {
+        if (owedByPerson[s.traveler_name] != null) owedByPerson[s.traveler_name] += s.share_amount;
+      });
+    } else if (travelerNames.size > 0) {
+      const share = baseAmt / travelerNames.size;
+      travelerNames.forEach((n) => { owedByPerson[n] += share; });
+    }
+  });
+
+  const orphanedPayers = Object.entries(orphanedTotals).map(([name, amount]) => ({ name, amount: +amount.toFixed(2) }));
+  return { paidByPerson, owedByPerson, orphanedPayers };
+}
+
 // ---- THE SETTLEMENT MODEL ----
 // Every expense is one of two kinds, and they settle completely differently:
 //   'bank'     — paid out of the shared Trip Bank (the pooled contributions). This is a
@@ -28,10 +81,11 @@ export async function setContributionPerPerson(tripId, amount) {
 //   computeSettlement      — Person ↔ Person (personal-expense peer-to-peer, unchanged
 //                             algorithm, just scoped to funding_source = 'personal' now)
 
-// Trip Bank ↔ Person: each traveler's bank balance is what they put in minus their equal
-// share of bank-funded spend. Positive = the bank owes them a refund. Negative = they owe
-// the bank. This is a hub, not peer-to-peer, so there's no matching algorithm needed —
-// every imbalance is directly between one traveler and "Trip Bank."
+// Trip Bank ↔ Person: each traveler's bank balance is what they put in minus their share
+// of bank-funded spend (per-expense, via computeExpenseShares — equal among all unless an
+// expense named specific participants). Positive = the bank owes them a refund. Negative =
+// they owe the bank. This is a hub, not peer-to-peer, so there's no matching algorithm
+// needed — every imbalance is directly between one traveler and "Trip Bank."
 export async function computeBankSettlement(tripId) {
   const db = await getDB();
   const travelers = await db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId);
@@ -39,17 +93,17 @@ export async function computeBankSettlement(tripId) {
   const bankExpenses = await db.getAllAsync("SELECT * FROM expenses WHERE trip_id = ? AND funding_source = 'bank'", tripId);
   if (travelers.length === 0) return { balances: {}, transactions: [] };
 
-  const bankSpent = bankExpenses.reduce((s, e) => s + e.amount * e.fx_rate, 0);
-  const share = bankSpent / travelers.length;
+  const travelerNames = new Set(travelers.map((t) => t.name));
+  const { owedByPerson } = await computeExpenseShares(db, bankExpenses, travelerNames);
 
   const contributedByPerson = {};
-  travelers.forEach(t => (contributedByPerson[t.name] = 0));
-  contributions.forEach(c => {
+  travelers.forEach((t) => (contributedByPerson[t.name] = 0));
+  contributions.forEach((c) => {
     if (contributedByPerson[c.traveler] != null) contributedByPerson[c.traveler] += c.amount * c.fx_rate;
   });
 
   const balances = {};
-  travelers.forEach(t => (balances[t.name] = +(contributedByPerson[t.name] - share).toFixed(2)));
+  travelers.forEach((t) => (balances[t.name] = +(contributedByPerson[t.name] - owedByPerson[t.name]).toFixed(2)));
 
   const transactions = [];
   Object.entries(balances).forEach(([name, bal]) => {
@@ -81,31 +135,11 @@ export async function computeSettlement(tripId) {
   const settlementRows = await db.getAllAsync('SELECT * FROM settlements WHERE trip_id = ?', tripId);
   if (travelers.length === 0) return { balances: {}, transactions: [], settledTransactions: settlementRows, orphanedPayers: [] };
 
-  const total = expenses.reduce((s, e) => s + e.amount * e.fx_rate, 0);
-  const share = total / travelers.length;
-  const paidByPerson = {};
-  const travelerNames = new Set(travelers.map(t => t.name));
-  travelers.forEach(t => (paidByPerson[t.name] = 0));
-
-  // An expense paid by someone not in the current travelers list (stale data from before
-  // the payer field was locked to real travelers, or a traveler removed after the fact)
-  // has nowhere to go in the balance math below — silently dropping that money would make
-  // the settlement wrong without any sign that it happened, which is exactly what
-  // produced "all settled up" while every real traveler still showed a negative balance.
-  // Tracked here and surfaced to the UI instead of swallowed.
-  const orphanedTotals = {};
-  expenses.forEach(e => {
-    const amt = e.amount * e.fx_rate;
-    if (travelerNames.has(e.paid_by)) {
-      paidByPerson[e.paid_by] += amt;
-    } else {
-      orphanedTotals[e.paid_by] = (orphanedTotals[e.paid_by] || 0) + amt;
-    }
-  });
-  const orphanedPayers = Object.entries(orphanedTotals).map(([name, amount]) => ({ name, amount: +amount.toFixed(2) }));
+  const travelerNames = new Set(travelers.map((t) => t.name));
+  const { paidByPerson, owedByPerson, orphanedPayers } = await computeExpenseShares(db, expenses, travelerNames);
 
   const balances = {};
-  travelers.forEach(t => (balances[t.name] = +(paidByPerson[t.name] - share).toFixed(2)));
+  travelers.forEach((t) => (balances[t.name] = +(paidByPerson[t.name] - owedByPerson[t.name]).toFixed(2)));
 
   // Net out recorded settlements before computing who-owes-whom: a settlement from X to Y
   // means X has already covered part of what they owed, so it raises X's balance and
@@ -164,6 +198,7 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   return {
     tripStatus: trip?.status || 'active',
     custodian: trip?.custodian || null,
+    hasTripBank: trip?.has_trip_bank !== 0,
     baseCurrency: trip?.base_currency || 'INR',
     contributions: contribRows,
     totalReceived,
