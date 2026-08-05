@@ -37,6 +37,7 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
   const [pendingRemove, setPendingRemove] = useState(null);
   const [blockedRemove, setBlockedRemove] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   const addTraveler = async () => {
     if (!newName.trim()) return;
@@ -87,13 +88,9 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
     return totals;
   }, [expenses]);
 
-  const paidByName = useMemo(() => {
-    const totals = { ...contributedByName };
-    Object.entries(spentByName).forEach(([name, amt]) => {
-      totals[name] = (totals[name] || 0) + amt;
-    });
-    return totals;
-  }, [contributedByName, spentByName]);
+  // Each person's share of bank-funded spend — already computed correctly by
+  // computeBankSettlement, not re-derived here from raw expenses a second time.
+  const sharedSpendByName = finance?.bankSettlement?.sharedSpendByPerson || {};
 
   // Net balance across both the Trip Bank and personal-expense settlements — the one
   // number that answers "is this person ahead or behind" without the reader needing to
@@ -139,24 +136,58 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
                 <PrimaryButton label="Save" onPress={saveEdit} style={{ marginStart: theme.space.sm }} />
               </View>
             ) : (
-              <View key={item.id} style={[styles.memberRow, i < travelers.length - 1 && styles.ledgerDivider]}>
-                <View style={[styles.avatar, { backgroundColor: avatarColor(item.name) }]}>
-                  <Text style={styles.avatarText}>{item.name.trim().charAt(0).toUpperCase()}</Text>
-                </View>
-                <TouchableOpacity style={{ flex: 1 }} onPress={() => setEditing({ id: item.id, name: item.name })}>
-                  <Text style={styles.memberName}>{item.name}</Text>
-                  <Text style={styles.memberSub}>
-                    Paid {cs}{(paidByName[item.name] || 0).toFixed(0)}
-                    {spentByName[item.name] > 0 ? ` · Spent ${cs}${spentByName[item.name].toFixed(0)}` : ''}
-                  </Text>
+              <View key={item.id} style={i < travelers.length - 1 && styles.ledgerDivider}>
+                <TouchableOpacity
+                  style={styles.memberRow}
+                  onPress={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.name}, ${bal > 0 ? 'gets back' : bal < 0 ? 'owes' : 'settled up'}. Tap for details.`}
+                >
+                  <View style={[styles.avatar, { backgroundColor: avatarColor(item.name) }]}>
+                    <Text style={styles.avatarText}>{item.name.trim().charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberName}>{item.name}</Text>
+                    <Text style={styles.memberOutcome}>
+                      Paid {cs}{(contributedByName[item.name] || 0).toFixed(0)}
+                      {(spentByName[item.name] || 0) + (sharedSpendByName[item.name] || 0) > 0
+                        ? ` · Spent ${cs}${((spentByName[item.name] || 0) + (sharedSpendByName[item.name] || 0)).toFixed(0)}`
+                        : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.memberRight}>
+                    <Text style={[styles.balanceText, bal < 0 && styles.negative]}>
+                      {bal > 0 ? `Gets back ${cs}${bal}` : bal < 0 ? `Owes ${cs}${Math.abs(bal)}` : 'Settled'}
+                    </Text>
+                  </View>
+                  <Feather
+                    name={expandedId === item.id ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={theme.inkMute}
+                    style={{ marginStart: theme.space.sm }}
+                  />
                 </TouchableOpacity>
-                <View style={styles.memberRight}>
-                  <Text style={[styles.balanceText, bal < 0 && styles.negative]}>
-                    Net {bal >= 0 ? '+' : ''}{cs}{bal}
-                  </Text>
-                  <Text style={styles.balanceHint}>{bal > 0 ? 'gets back' : bal < 0 ? 'owes' : 'settled'}</Text>
-                  <Text style={styles.removeLink} onPress={() => setPendingRemove(item)}>Remove</Text>
-                </View>
+
+                {expandedId === item.id && (
+                  <View style={styles.expandedDetail}>
+                    <DetailLine label="Contributed to Trip Bank" value={`${cs}${(contributedByName[item.name] || 0).toFixed(0)}`} />
+                    {spentByName[item.name] > 0 && (
+                      <DetailLine label="Paid personally" value={`${cs}${spentByName[item.name].toFixed(0)}`} />
+                    )}
+                    {sharedSpendByName[item.name] > 0 && (
+                      <DetailLine label="Share of group spend" value={`${cs}${sharedSpendByName[item.name].toFixed(0)}`} />
+                    )}
+                    <DetailLine label="Net balance" value={`${bal >= 0 ? '+' : '-'}${cs}${Math.abs(bal)}`} strong />
+                    <View style={styles.expandedActions}>
+                      <TouchableOpacity onPress={() => setEditing({ id: item.id, name: item.name })}>
+                        <Text style={styles.detailLink}>Rename</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setPendingRemove(item)}>
+                        <Text style={styles.removeLink}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             );
           })}
@@ -201,6 +232,17 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
   );
 }
 
+function DetailLine({ label, value, strong }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  return (
+    <View style={styles.detailLine}>
+      <Text style={[styles.detailLabel, strong && styles.detailLabelStrong]}>{label}</Text>
+      <Text style={[styles.detailValue, strong && styles.detailValueStrong]}>{value}</Text>
+    </View>
+  );
+}
+
 const makeStyles = (theme) => StyleSheet.create({
   section: { flex: 1, paddingBottom: theme.space.xxl },
   row: { flexDirection: 'row' },
@@ -215,10 +257,17 @@ const makeStyles = (theme) => StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginEnd: theme.space.md },
   avatarText: { color: '#fff', fontSize: theme.type.body, fontWeight: theme.weight.semibold },
   memberName: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
-  memberSub: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
+  memberOutcome: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
   memberRight: { alignItems: 'flex-end' },
   balanceText: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.brandDeep },
   negative: { color: theme.danger },
-  balanceHint: { fontSize: 10.5, color: theme.inkMute, marginTop: 1 },
-  removeLink: { fontSize: 10.5, color: theme.danger, fontWeight: theme.weight.semibold, marginTop: 4 },
+  removeLink: { fontSize: 12.5, color: theme.danger, fontWeight: theme.weight.semibold },
+  expandedDetail: { paddingHorizontal: theme.space.md, paddingBottom: theme.space.md, paddingTop: 2, marginStart: 52 },
+  detailLine: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  detailLabel: { fontSize: 12.5, color: theme.inkMute },
+  detailLabelStrong: { color: theme.ink, fontWeight: theme.weight.semibold },
+  detailValue: { fontSize: 12.5, color: theme.inkMute },
+  detailValueStrong: { color: theme.ink, fontWeight: theme.weight.semibold },
+  expandedActions: { flexDirection: 'row', gap: theme.space.lg, marginTop: theme.space.sm },
+  detailLink: { fontSize: 12.5, color: theme.brandDeep, fontWeight: theme.weight.semibold },
 });

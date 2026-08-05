@@ -91,7 +91,7 @@ export async function computeBankSettlement(tripId) {
   const travelers = await db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId);
   const contributions = await db.getAllAsync('SELECT * FROM contributions WHERE trip_id = ?', tripId);
   const bankExpenses = await db.getAllAsync("SELECT * FROM expenses WHERE trip_id = ? AND funding_source = 'bank'", tripId);
-  if (travelers.length === 0) return { balances: {}, transactions: [] };
+  if (travelers.length === 0) return { balances: {}, transactions: [], sharedSpendByPerson: {} };
 
   const travelerNames = new Set(travelers.map((t) => t.name));
   const { owedByPerson } = await computeExpenseShares(db, bankExpenses, travelerNames);
@@ -110,6 +110,56 @@ export async function computeBankSettlement(tripId) {
     if (bal > 0.01) transactions.push({ from: 'Trip Bank', to: name, amount: +bal.toFixed(2) });
     else if (bal < -0.01) transactions.push({ from: name, to: 'Trip Bank', amount: +(-bal).toFixed(2) });
   });
+
+  // Each person's share of bank-funded spend — "Shared Spend" on Members, distinct from
+  // what they personally paid out of pocket. Exposed here rather than making Members
+  // re-derive it, since this is the one place that already computes it correctly.
+  return { balances, transactions, sharedSpendByPerson: owedByPerson };
+}
+
+// FINAL Trip Bank settlement — used only once a trip is closed. This is a genuine
+// reconciliation with the founding settlement model, not a reversal of it: the three
+// outcomes (Trip Bank→Person, Person→Trip Bank, Person→Person) are all correct WHILE a
+// trip is active — someone topping up a shortfall mid-trip is paying into a pool that's
+// still actively being spent from, which is exactly what the Trip Bank is for. But once a
+// trip is closed, "Trip Bank" stops being a place money is still flowing through — it's
+// just a number that needs to be zeroed out. Asking someone to "pay the wallet" at that
+// point has no real-world action behind it; there's no custodian left to hand cash to for
+// a trip that's over. So at closure specifically, any Person→Trip Bank shortfalls get
+// matched directly against Trip Bank→Person refunds using the same greedy algorithm as
+// personal settlement — real people paying real people. Only a genuine unmatched surplus
+// (the bank has real leftover cash with nobody left who owes it) still comes from Trip
+// Bank, since that money has to come from somewhere real: the custodian's own pocket.
+export async function computeFinalBankSettlement(tripId) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT custodian FROM trips WHERE id = ?', tripId);
+  // If a custodian is named, use their real name for the leftover case instead of the
+  // abstract "Trip Bank" label — the custodian IS a real person physically holding that
+  // cash, so naming them directly keeps this a genuine Person↔Person transaction rather
+  // than one involving an entity that isn't a person. Falls back to "Trip Bank" only when
+  // no custodian was ever set, since there's no real name available to use instead.
+  const bankName = trip?.custodian || 'Trip Bank';
+  const { balances } = await computeBankSettlement(tripId);
+
+  const debtors = Object.entries(balances).filter(([, v]) => v < -0.01).map(([n, v]) => [n, -v]);
+  const creditors = Object.entries(balances).filter(([, v]) => v > 0.01).map(([n, v]) => [n, v]);
+  const transactions = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const [dName, dAmt] = debtors[i];
+    const [cName, cAmt] = creditors[j];
+    const amt = Math.min(dAmt, cAmt);
+    transactions.push({ from: dName, to: cName, amount: +amt.toFixed(2) });
+    debtors[i][1] -= amt;
+    creditors[j][1] -= amt;
+    if (debtors[i][1] < 0.01) i++;
+    if (creditors[j][1] < 0.01) j++;
+  }
+  // Anything left over after matching real people against each other is a genuine
+  // surplus or shortfall — real leftover cash that needs to go somewhere real, or a real
+  // funding gap someone needs to cover. Routed to the custodian by name when known.
+  while (i < debtors.length) { transactions.push({ from: debtors[i][0], to: bankName, amount: +debtors[i][1].toFixed(2) }); i++; }
+  while (j < creditors.length) { transactions.push({ from: bankName, to: creditors[j][0], amount: +creditors[j][1].toFixed(2) }); j++; }
 
   return { balances, transactions };
 }
@@ -192,6 +242,9 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   const currentCash = totalReceived - bankSpent;
   const settlement = precomputedSettlement ?? await computeSettlement(tripId);
   const bankSettlement = await computeBankSettlement(tripId);
+  // Only computed when actually needed — closed trips are the exception, not the common
+  // case, and this does its own extra querying (custodian lookup, re-deriving balances).
+  const finalBankSettlement = trip?.status === 'closed' ? await computeFinalBankSettlement(tripId) : null;
   const perPerson = trip?.contribution_per_person ?? null;
   const fundTarget = perPerson != null ? perPerson * travelerCount : null;
 
@@ -212,5 +265,6 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
     liveForecast: settlement,
     finalSettlement: trip?.status === 'closed' ? settlement : null,
     bankSettlement,
+    finalBankSettlement,
   };
 }

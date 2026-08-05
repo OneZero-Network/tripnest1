@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
@@ -31,7 +31,7 @@ const TABS = [
   { key: 'Activity', icon: 'activity' },
   { key: 'Settle', icon: 'check-circle' },
 ];
-const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, hasTripBank: true, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [] }, tripStatus: 'active' };
+const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, hasTripBank: true, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [], sharedSpendByPerson: {} }, finalBankSettlement: null, tripStatus: 'active' };
 
 // TripScreen is an orchestrator: it owns the trip-wide data fetch and tab selection,
 // then hands each tab its slice of data plus a single onChanged() refresh callback.
@@ -50,6 +50,22 @@ export default function TripScreen({ route, navigation }) {
   if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
   }
+  // The real bug behind "tab indicator doesn't follow swipe": the state was always
+  // updating correctly on swipe, but the horizontal tab-bar scroller never scrolled to
+  // bring the newly-active tab into view — so on a trip with enough tabs to need
+  // scrolling, swiping to "Settle" could leave it selected but still off-screen, making
+  // it look like nothing happened. This ref + effect keeps the bar in sync with `tab`
+  // regardless of whether it changed via tap or swipe.
+  const tabsScrollRef = useRef(null);
+  const tabLayouts = useRef({});
+  useEffect(() => {
+    const layout = tabLayouts.current[tab];
+    if (layout && tabsScrollRef.current) {
+      const targetX = Math.max(0, layout.x - 24);
+      tabsScrollRef.current.scrollTo({ x: targetX, animated: true });
+    }
+  }, [tab]);
+
   const changeTab = (key) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setTab(key);
@@ -159,9 +175,19 @@ export default function TripScreen({ route, navigation }) {
         </View>
 
         <View style={styles.tabsRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingEnd: 16 }}>
+          <ScrollView
+            ref={tabsScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingEnd: 16 }}
+          >
             {TABS.map((t) => (
-              <TouchableOpacity key={t.key} onPress={() => changeTab(t.key)} style={[styles.tab, tab === t.key && styles.tabActive]}>
+              <TouchableOpacity
+                key={t.key}
+                onPress={() => changeTab(t.key)}
+                onLayout={(e) => { tabLayouts.current[t.key] = e.nativeEvent.layout; }}
+                style={[styles.tab, tab === t.key && styles.tabActive]}
+              >
                 <Feather name={t.icon} size={14} color={tab === t.key ? theme.ink : theme.inkMute} style={{ marginEnd: 6 }} />
                 <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.key}</Text>
               </TouchableOpacity>

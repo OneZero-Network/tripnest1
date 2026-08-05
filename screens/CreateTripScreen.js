@@ -1,5 +1,5 @@
 import React, {useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
@@ -22,6 +22,7 @@ export default function CreateTripScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState('INR');
   const [hasTripBank, setHasTripBank] = useState(false);
+  const [contributionAmounts, setContributionAmounts] = useState({}); // { travelerName: '500' }
 
   const addTraveler = () => {
     const trimmed = travelerInput.trim();
@@ -50,7 +51,29 @@ export default function CreateTripScreen({ navigation }) {
           const tid = String(Date.now()) + Math.random().toString(36).slice(2);
           await db.runAsync('INSERT INTO travelers (id, trip_id, name) VALUES (?, ?, ?)', tid, id, t);
         }
+        // Initial contributions, done as part of the same atomic setup — the whole point
+        // of asking "will everyone contribute?" during creation instead of leaving it for
+        // an extra step right after. Raw inserts here, not the addContribution() helper,
+        // since that does its own separate DB fetch per call; inside this transaction,
+        // reusing the same connection for every write is what keeps it one atomic unit.
+        let anyContribution = false;
+        if (hasTripBank) {
+          for (const t of travelers) {
+            const amt = parseFloat(contributionAmounts[t]);
+            if (amt > 0) {
+              const cid = String(Date.now()) + Math.random().toString(36).slice(2);
+              await db.runAsync(
+                'INSERT INTO contributions (id, trip_id, traveler, amount, created_at, currency, fx_rate) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                cid, id, t, amt, ts, baseCurrency, 1
+              );
+              anyContribution = true;
+            }
+          }
+        }
         await logTimelineEvent({ tripId: id, type: 'trip', title: `Trip created: ${name.trim()}`, timestamp: ts, idSuffix: '_created' });
+        if (anyContribution) {
+          await logTimelineEvent({ tripId: id, type: 'contribution', title: 'Initial contributions added at setup', timestamp: ts + 1, idSuffix: '_initcontrib' });
+        }
       });
       navigation.replace('Trip', { tripId: id, tripName: name.trim() });
     } finally {
@@ -69,7 +92,7 @@ export default function CreateTripScreen({ navigation }) {
       </View>
 
       <View style={styles.body}>
-        <Text style={styles.label}>Trip Name</Text>
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>        <Text style={styles.label}>Trip Name</Text>
         <TextInput
           style={styles.nameInput}
           placeholder="e.g. Goa Trip"
@@ -102,21 +125,21 @@ export default function CreateTripScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={travelers}
-          keyExtractor={(item) => item}
-          style={{ marginTop: 12, flexGrow: 0 }}
-          renderItem={({ item }) => (
-            <View style={styles.travelerChip}>
-              <IconBadge type="traveler" size={30} />
-              <Text style={styles.travelerName}>{item}</Text>
-              <TouchableOpacity onPress={() => removeTraveler(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="x" size={16} color={theme.inkMute} />
-              </TouchableOpacity>
-            </View>
+        <View style={{ marginTop: 12 }}>
+          {travelers.length === 0 ? (
+            <Text style={styles.hint}>You can add yourself and others now, or later from the Travelers tab.</Text>
+          ) : (
+            travelers.map((item) => (
+              <View key={item} style={styles.travelerChip}>
+                <IconBadge type="traveler" size={30} />
+                <Text style={styles.travelerName}>{item}</Text>
+                <TouchableOpacity onPress={() => removeTraveler(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Feather name="x" size={16} color={theme.inkMute} />
+                </TouchableOpacity>
+              </View>
+            ))
           )}
-          ListEmptyComponent={<Text style={styles.hint}>You can add yourself and others now, or later from the Travelers tab.</Text>}
-        />
+        </View>
 
         {/* This was previously buried behind a "+ Advanced options" text link — one
             reviewer round said Trip Bank appeared too early and should be nearly
@@ -134,8 +157,31 @@ export default function CreateTripScreen({ navigation }) {
           <Chip label="Set up shared money" active={hasTripBank} onPress={() => setHasTripBank(true)} />
         </View>
         {hasTripBank && (
-          <Text style={styles.learnMoreLink} onPress={() => navigation.navigate('HowItWorks')}>How does this work? →</Text>
+          <>
+            <Text style={styles.learnMoreLink} onPress={() => navigation.navigate('HowItWorks')}>How does this work? →</Text>
+            {travelers.length > 0 ? (
+              <View style={styles.contributionsBlock}>
+                <Text style={[styles.label, { marginTop: theme.space.lg }]}>Initial contributions (optional)</Text>
+                {travelers.map((t) => (
+                  <View key={t} style={styles.contributionRow}>
+                    <Text style={styles.contributionName}>{t}</Text>
+                    <TextInput
+                      style={styles.contributionInput}
+                      placeholder="0"
+                      placeholderTextColor={theme.inkMute}
+                      keyboardType="numeric"
+                      value={contributionAmounts[t] || ''}
+                      onChangeText={(v) => setContributionAmounts((prev) => ({ ...prev, [t]: v }))}
+                    />
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.hint}>Add travelers above to set their initial contributions here.</Text>
+            )}
+          </>
         )}
+        </ScrollView>
       </View>
 
       <View style={styles.footer}>
@@ -169,5 +215,9 @@ const makeStyles = (theme) => StyleSheet.create({
   sharedMoneyHint: { fontSize: 12.5, color: theme.inkMute, marginTop: 4, lineHeight: 17 },
   sharedMoneyChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: theme.space.sm },
   learnMoreLink: { fontSize: 12.5, color: theme.brandDeep, fontWeight: theme.weight.semibold, marginTop: theme.space.sm },
+  contributionsBlock: { marginBottom: theme.space.md },
+  contributionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.line },
+  contributionName: { fontSize: 15, color: theme.ink, fontWeight: theme.weight.medium },
+  contributionInput: { width: 90, backgroundColor: theme.surface, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 10, paddingVertical: 8, textAlign: 'right', color: theme.ink },
   footer: { padding: 20 },
 });

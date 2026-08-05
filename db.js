@@ -478,7 +478,7 @@ export async function reopenTrip(tripId) {
 // ---- Finance (settlement, trip fund, finance projection) lives in finance/calculator.js ----
 // Re-exported here so every existing "from '../db'" import across the app keeps working
 // unchanged — this is an internal file reorganization, not a public API change.
-export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement } from './finance/calculator';
+export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement, computeFinalBankSettlement } from './finance/calculator';
 import { computeSettlement, computeFinance } from './finance/calculator';
 
 // ---- Single entry point for TripScreen's load cycle ----
@@ -515,6 +515,55 @@ function placeKey(tripName) {
     .split(/\s+/)
     .filter((w) => w && !STOPWORDS.has(w) && !/^\d{4}$/.test(w)); // drop stopwords and bare years
   return words[0] || null;
+}
+
+// ---- Consolidated Home dashboard: real numbers across every active trip, not just the
+// most recent one. Money only gets summed within trips sharing the user's default
+// currency — there's no live exchange-rate source in this app, and fabricating one to
+// force a single global number would mean silently wrong totals in a finance app, which
+// is worse than being upfront that a THB trip and an INR trip don't add together here.
+// Trip counts and member counts are currency-independent, so those DO cover every trip. ----
+export async function getConsolidatedOverview() {
+  const db = await getDB();
+  const defaultCurrency = (await getAppMeta('default_currency')) || 'INR';
+  const activeTrips = await db.getAllAsync("SELECT * FROM trips WHERE status = 'active' ORDER BY created_at DESC");
+
+  const sameCurrencyTrips = activeTrips.filter((t) => (t.base_currency || 'INR') === defaultCurrency);
+  const otherCurrencyTrips = activeTrips.filter((t) => (t.base_currency || 'INR') !== defaultCurrency);
+
+  let todaySpend = 0;
+  let pendingSettlements = 0;
+  const allMemberNames = new Set();
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(); dayEnd.setHours(23, 59, 59, 999);
+
+  for (const trip of activeTrips) {
+    const travelers = await db.getAllAsync('SELECT name FROM travelers WHERE trip_id = ?', trip.id);
+    travelers.forEach((t) => allMemberNames.add(t.name));
+
+    if ((trip.base_currency || 'INR') === defaultCurrency) {
+      const spentRow = await db.getFirstAsync(
+        'SELECT COALESCE(SUM(amount*fx_rate),0) as total FROM expenses WHERE trip_id = ? AND created_at BETWEEN ? AND ?',
+        trip.id, dayStart.getTime(), dayEnd.getTime()
+      );
+      todaySpend += spentRow.total;
+    }
+
+    const { finance } = await computeTripData(trip.id);
+    const bankTx = finance.bankSettlement?.transactions?.length || 0;
+    const personalTx = finance.liveForecast?.transactions?.length || 0;
+    pendingSettlements += bankTx + personalTx;
+  }
+
+  return {
+    defaultCurrency,
+    activeTripCount: activeTrips.length,
+    sameCurrencyTrips,
+    otherCurrencyTrips,
+    todaySpend,
+    pendingSettlements,
+    totalActiveMembers: allMemberNames.size,
+  };
 }
 
 export async function getDestinationInsights() {

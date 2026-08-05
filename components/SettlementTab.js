@@ -10,8 +10,8 @@ import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, Su
 // math for the reader — that distinction exists so the ENGINE gets the math right, not
 // so the user has to understand it. Both settlement computations (bankSettlement,
 // liveForecast) get merged here into exactly two plain buckets:
-//   "People to refund"      — money owed TO a traveler (always from the Trip Bank)
-//   "People who need to pay" — money a traveler owes, whether that's topping up the bank
+//   "Receive money"   (was "People to refund")     — money owed TO a traveler (always from the Trip Bank)
+//   "Pay these people" (was "People who need to pay") — money a traveler owes, whether that's topping up the bank
 //                              or paying another traveler back directly. The user doesn't
 //                              need to know which; the underlying transaction already does.
 export default function SettlementTab({ tripId, finance, navigation, onOpenAdvanced, onChanged }) {
@@ -22,9 +22,20 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
   const [savedAt, setSavedAt] = useState(null);
   const cs = currencySymbol(finance.baseCurrency);
 
-  const toRefund = (finance.bankSettlement?.transactions || []).filter(t => t.from === 'Trip Bank');
+  // Once a trip is closed, "Trip Bank" stops being an intermediary someone can actually
+  // pay into — finalBankSettlement already converted any remaining shortfall/surplus into
+  // direct payments between real people (or to the custodian by name, if one was set),
+  // per the reconciliation of the founding three-outcome model with the fact that a
+  // closed trip has no one left to physically hand cash to. While the trip is still
+  // active, the live hub model is correct and unchanged: paying into the pool mid-trip is
+  // a real action with a real custodian on the other end.
+  const bankTransactions = finance.tripStatus === 'closed' && finance.finalBankSettlement
+    ? finance.finalBankSettlement.transactions
+    : (finance.bankSettlement?.transactions || []);
+  const bankName = finance.custodian || 'Trip Bank';
+  const toRefund = bankTransactions.filter(t => t.from === bankName || t.from === 'Trip Bank');
   const toPay = [
-    ...(finance.bankSettlement?.transactions || []).filter(t => t.from !== 'Trip Bank'),
+    ...bankTransactions.filter(t => t.from !== bankName && t.from !== 'Trip Bank'),
     ...(finance.liveForecast?.transactions || []),
   ];
 
@@ -89,9 +100,9 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
       )}
 
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.lg }}>
-        <Text style={styles.heading}>People to refund</Text>
+        <Text style={styles.heading}>Receive money</Text>
         {toRefund.length === 0 ? (
-          <Text style={styles.muted}>Nobody's owed a refund right now.</Text>
+          <Text style={styles.muted}>✅ Everyone is settled.</Text>
         ) : (
           <LedgerList>
             {toRefund.map((t, i) => (
@@ -105,9 +116,9 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
       </Card>
 
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.md, marginBottom: theme.space.md }}>
-        <Text style={styles.heading}>People who need to pay</Text>
+        <Text style={styles.heading}>Pay these people</Text>
         {toPay.length === 0 ? (
-          <Text style={styles.muted}>Everyone's settled up.</Text>
+          <Text style={styles.muted}>✅ Everyone is settled.</Text>
         ) : (
           <LedgerList>
             {toPay.map((t, i) => (

@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { setAppMeta } from '../db';
-import { PrimaryButton, useTheme } from '../components/UI';
+import { PrimaryButton, Chip, useTheme } from '../components/UI';
 
 const BULLETS = ['Track expenses', 'Split automatically', 'Settle instantly', 'Works offline'];
+const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'THB'];
 
 // Shown exactly once, ever — SplashScreen checks the app_meta 'onboarded' flag and routes
 // here only the first time. This is the one screen in the app that's allowed to be
@@ -15,9 +16,14 @@ export default function WelcomeScreen({ navigation }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const styles = makeStyles(theme);
+  const [defaultCurrency, setDefaultCurrency] = useState('INR');
 
   const getStarted = async () => {
     await setAppMeta('onboarded', '1');
+    // Powers the consolidated Home dashboard across multiple trips — only trips in this
+    // currency get summed into one number there; trips in other currencies are listed
+    // separately rather than silently converted at a made-up exchange rate.
+    await setAppMeta('default_currency', defaultCurrency);
     navigation.replace('Home');
   };
 
@@ -40,6 +46,13 @@ export default function WelcomeScreen({ navigation }) {
             </View>
             <Text style={styles.bulletText}>{b}</Text>
           </View>
+        ))}
+      </View>
+
+      <Text style={styles.currencyLabel}>Your default currency</Text>
+      <View style={styles.currencyRow}>
+        {CURRENCIES.map((c) => (
+          <Chip key={c} label={c} active={defaultCurrency === c} onPress={() => setDefaultCurrency(c)} />
         ))}
       </View>
 
@@ -72,6 +85,8 @@ const makeStyles = (theme) => StyleSheet.create({
   logoText: { fontSize: 24, fontWeight: theme.weight.semibold, color: '#fff' },
   tagline: { fontSize: 26, fontWeight: theme.weight.semibold, color: '#fff', lineHeight: 34, marginBottom: theme.space.xxl },
   bullets: { gap: theme.space.md },
+  currencyLabel: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: theme.space.xl, marginBottom: theme.space.sm, textTransform: 'uppercase', letterSpacing: 0.5 },
+  currencyRow: { flexDirection: 'row', flexWrap: 'wrap' },
   bulletRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
   bulletIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   bulletText: { fontSize: 16, color: 'rgba(255,255,255,0.9)' },

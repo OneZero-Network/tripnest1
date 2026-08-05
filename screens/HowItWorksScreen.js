@@ -12,19 +12,26 @@ import { useTheme } from '../components/UI';
 // understands what it's telling them — this is the screen that closes that gap, reachable
 // from the exact two moments a user would actually wonder about it (Settlement's info
 // icon, and the Trip Bank toggle at trip creation), not just buried in a menu.
+// RETENTION GAP THIS SCREEN CLOSES: the app had every piece of the settlement model
+// correctly implemented, but nowhere that actually TAUGHT it in plain terms. The primary
+// journey below is deliberately jargon-free — no "Trip Bank," no settlement direction
+// names — matching how a first-time user actually thinks about a trip. The mechanics
+// (Trip Bank, its two settlement directions) are real and some people do want them, so
+// they're still here, just as a second section below, not the primary explanation.
 const STEPS = [
-  { icon: 'flag', title: 'Create a trip', body: 'Name it, pick a currency.' },
-  { icon: 'users', title: 'Add your friends', body: 'Everyone splitting costs, as real people — not free text.' },
-  { icon: 'briefcase', title: 'Consolidate into a Trip Bank (optional)', body: "Everyone pools money upfront into one shared bank. Skip this if you'd rather just settle up person-to-person as you go." },
-  { icon: 'dollar-sign', title: 'Track every expense', body: 'Personal payments, shared cash from the bank, or a foreign currency — TripNest converts everything to one number automatically.' },
-  { icon: 'check-circle', title: 'TripNest calculates who pays whom', body: 'Automatically, in three possible directions — see below.' },
-  { icon: 'archive', title: 'Save it as a reusable record', body: 'Close the trip, and the final settlement stays saved for reference.' },
+  { icon: 'flag', title: 'Create a trip', body: 'Name it, add friends.' },
+  { icon: 'dollar-sign', title: 'Record expenses', body: 'As you spend — who paid, how much, for what.' },
+  { icon: 'check-circle', title: 'TripNest calculates who owes whom', body: 'Automatically, the moment you add an expense — you never do the math.' },
+  { icon: 'archive', title: 'Settle and finish', body: 'Mark it paid when everyone squares up, and the record stays saved.' },
 ];
 
+// Only shown to someone who scrolls this far wanting the mechanics — matching the fix
+// that a closed trip only ever produces two kinds of settlement (a refund, or one
+// traveler paying another directly), never a payment into a pool that no longer has
+// anyone left to receive it.
 const OUTCOMES = [
-  { icon: 'arrow-down-circle', tone: 'brand', title: 'Trip Bank → Person', body: "The bank has unused cash left over — it gets refunded back to whoever's owed a share." },
-  { icon: 'arrow-up-circle', tone: 'warn', title: 'Person → Trip Bank', body: "The bank came up short — whoever hasn't paid their share yet tops it up." },
-  { icon: 'repeat', tone: 'accent', title: 'Person → Person', body: 'Someone paid for something personally, out of their own pocket — they get paid back directly by whoever benefited, no bank involved.' },
+  { icon: 'arrow-down-circle', tone: 'brand', title: 'You get refunded', body: "If you're part of a shared pool (optional — most trips skip this), any leftover cash comes back to whoever's owed it once the trip closes." },
+  { icon: 'repeat', tone: 'accent', title: 'You pay someone directly', body: 'For anything paid personally, or any pool shortfall once a trip closes — always a real person paying another real person, never a payment into a wallet.' },
 ];
 
 export default function HowItWorksScreen({ navigation }) {
@@ -61,8 +68,8 @@ export default function HowItWorksScreen({ navigation }) {
           </View>
         ))}
 
-        <Text style={styles.sectionHeading}>The three ways money moves</Text>
-        <Text style={styles.sectionSub}>This is the whole idea — everything on Settlement is one of these three.</Text>
+        <Text style={styles.sectionHeading}>How settlement actually works</Text>
+        <Text style={styles.sectionSub}>Optional detail, for anyone curious — everything on Settle boils down to these two.</Text>
 
         {OUTCOMES.map((o) => (
           <View key={o.title} style={[styles.outcomeCard, { borderColor: theme.line }]}>

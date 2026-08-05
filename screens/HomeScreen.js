@@ -6,7 +6,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDB, computeTripData, getDrafts, getDestinationInsights } from '../db';
+import { getDB, computeTripData, getDrafts, getDestinationInsights, getConsolidatedOverview, getNotificationFeed } from '../db';
 import { getTripCoverTheme } from '../tripTheme';
 import { LinearGradient } from 'expo-linear-gradient';
 import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Container, useTheme } from '../components/UI';
@@ -41,6 +41,8 @@ export default function HomeScreen({ navigation }) {
   const [trips, setTrips] = useState([]);
   const [current, setCurrent] = useState(null);
   const [insights, setInsights] = useState([]);
+  const [consolidated, setConsolidated] = useState(null);
+  const [recentActivity, setRecentActivity] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [homeTab, setHomeTab] = useState('overview');
 
@@ -52,13 +54,24 @@ export default function HomeScreen({ navigation }) {
 
       const activeTrip = rows.find((t) => t.status === 'active');
       if (activeTrip) {
-        const { finance } = await computeTripData(activeTrip.id);
+        const { finance, today } = await computeTripData(activeTrip.id);
         const drafts = await getDrafts(activeTrip.id);
-        setCurrent({ ...activeTrip, cashLeft: finance.currentCash, pendingDrafts: drafts.length, baseCurrency: finance.baseCurrency });
+        const pendingSettlements = (finance.bankSettlement?.transactions?.length || 0) + (finance.liveForecast?.transactions?.length || 0);
+        setCurrent({
+          ...activeTrip,
+          cashLeft: finance.currentCash,
+          totalSpent: finance.totalSpent,
+          spentToday: today?.spentToday || 0,
+          pendingSettlements,
+          pendingDrafts: drafts.length,
+          baseCurrency: finance.baseCurrency,
+        });
       } else {
         setCurrent(null);
       }
       setInsights(await getDestinationInsights());
+      setConsolidated(await getConsolidatedOverview());
+      setRecentActivity((await getNotificationFeed()).slice(0, 3));
       setLoadError(null);
     } catch (err) {
       setLoadError(err?.message || 'Could not load your trips.');
@@ -118,6 +131,57 @@ export default function HomeScreen({ navigation }) {
               />
             ) : homeTab === 'overview' ? (
               <>
+                {consolidated && consolidated.activeTripCount > 0 && (
+                  <View style={styles.consolidatedCard}>
+                    <Text style={styles.consolidatedHeading}>Active Trips: {consolidated.activeTripCount}</Text>
+                    <View style={styles.consolidatedStatsRow}>
+                      <View style={styles.consolidatedStat}>
+                        <Text style={styles.consolidatedValue}>{currencySymbol(consolidated.defaultCurrency)}{Math.round(consolidated.todaySpend).toLocaleString()}</Text>
+                        <Text style={styles.consolidatedLabel}>Today's spend</Text>
+                      </View>
+                      <View style={styles.consolidatedStat}>
+                        <Text style={styles.consolidatedValue}>{consolidated.pendingSettlements}</Text>
+                        <Text style={styles.consolidatedLabel}>Pending settlements</Text>
+                      </View>
+                      <View style={styles.consolidatedStat}>
+                        <Text style={styles.consolidatedValue}>{consolidated.totalActiveMembers}</Text>
+                        <Text style={styles.consolidatedLabel}>Active members</Text>
+                      </View>
+                    </View>
+                    {consolidated.otherCurrencyTrips.length > 0 && (
+                      <Text style={styles.consolidatedNote}>
+                        Today's spend covers trips in {consolidated.defaultCurrency} only — {consolidated.otherCurrencyTrips.map(t => `${t.name} (${t.base_currency})`).join(', ')} {consolidated.otherCurrencyTrips.length === 1 ? 'uses' : 'use'} a different currency, so amounts aren't mixed together here.
+                      </Text>
+                    )}
+                    {consolidated.activeTripCount > 1 && (
+                      <View style={styles.openTripsRow}>
+                        {[...consolidated.sameCurrencyTrips, ...consolidated.otherCurrencyTrips].map((t) => (
+                          <TouchableOpacity key={t.id} style={styles.openTripChip} onPress={() => openTrip(t)}>
+                            <Text style={styles.openTripChipText}>{getTripCoverTheme(t.name).emoji} {t.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {recentActivity.length > 0 && (
+                  <View style={styles.activityCard}>
+                    <Text style={styles.activityHeading}>Needs attention</Text>
+                    {recentActivity.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.activityRow}
+                        onPress={() => navigation.navigate('Trip', { tripId: item.tripId, tripName: item.tripName })}
+                      >
+                        <Feather name={item.icon} size={14} color={theme.brandDeep} />
+                        <Text style={styles.activityText} numberOfLines={1}>{item.message}</Text>
+                        <Feather name="chevron-right" size={14} color={theme.inkMute} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
                 {current ? (
                   <TouchableOpacity activeOpacity={0.85} onPress={() => openTrip(current)}>
                     <LinearGradient
@@ -136,12 +200,16 @@ export default function HomeScreen({ navigation }) {
                       </View>
                       <View style={styles.heroStatsRow}>
                         <View>
-                          <Text style={styles.heroStatLabel}>Cash left</Text>
-                          <Text style={styles.heroStatValue}>{currencySymbol(current.baseCurrency)}{Math.round(current.cashLeft ?? 0).toLocaleString()}</Text>
+                          <Text style={styles.heroStatLabel}>Total spent</Text>
+                          <Text style={styles.heroStatValue}>{currencySymbol(current.baseCurrency)}{Math.round(current.totalSpent ?? 0).toLocaleString()}</Text>
                         </View>
                         <View>
-                          <Text style={styles.heroStatLabel}>Pending drafts</Text>
-                          <Text style={styles.heroStatValue}>{current.pendingDrafts}</Text>
+                          <Text style={styles.heroStatLabel}>Today</Text>
+                          <Text style={styles.heroStatValue}>{currencySymbol(current.baseCurrency)}{Math.round(current.spentToday ?? 0).toLocaleString()}</Text>
+                        </View>
+                        <View>
+                          <Text style={styles.heroStatLabel}>Pending</Text>
+                          <Text style={styles.heroStatValue}>{current.pendingSettlements ?? 0}</Text>
                         </View>
                         <View style={styles.heroViewBtn}>
                           <Text style={styles.heroViewText}>View trip</Text>
@@ -274,13 +342,27 @@ const makeStyles = (theme) => StyleSheet.create({
   activePillText: { color: '#fff', fontSize: 11, fontWeight: theme.weight.semibold },
   heroLabel: { color: 'rgba(255,255,255,0.7)', fontSize: theme.type.caption, fontWeight: theme.weight.semibold, letterSpacing: 0.6 },
   heroTitle: { color: '#fff', fontSize: theme.type.title, fontWeight: theme.weight.semibold, marginTop: 4, letterSpacing: -0.3 },
-  heroStatsRow: { flexDirection: 'row', alignItems: 'center', marginTop: theme.space.lg, gap: theme.space.xl },
+  heroStatsRow: { flexDirection: 'row', alignItems: 'center', marginTop: theme.space.lg, gap: theme.space.md },
   heroStatLabel: { color: 'rgba(255,255,255,0.65)', fontSize: theme.type.caption },
   heroStatValue: { color: '#fff', fontSize: theme.type.heading, fontWeight: theme.weight.semibold, marginTop: 2 },
   heroViewBtn: { flexDirection: 'row', alignItems: 'center', marginStart: 'auto', gap: 4, backgroundColor: 'rgba(255,255,255,0.16)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.sm },
   heroViewText: { color: '#fff', fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
   viewAllRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: theme.space.xl, minHeight: theme.a11y.minTouchTarget },
   insightCard: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, padding: theme.space.md, marginTop: theme.space.md },
+  consolidatedCard: { backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, padding: theme.space.lg, marginBottom: theme.space.xl },
+  consolidatedHeading: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.md },
+  consolidatedStatsRow: { flexDirection: 'row', gap: theme.space.sm },
+  consolidatedStat: { flex: 1 },
+  consolidatedValue: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
+  consolidatedLabel: { fontSize: 11, color: theme.inkMute, marginTop: 2 },
+  consolidatedNote: { fontSize: 11.5, color: theme.inkMute, marginTop: theme.space.md, lineHeight: 16 },
+  activityCard: { backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, padding: theme.space.lg, marginBottom: theme.space.xl },
+  activityHeading: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.sm },
+  activityRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, minHeight: theme.a11y.minTouchTarget },
+  activityText: { flex: 1, fontSize: theme.type.caption, color: theme.inkSoft },
+  openTripsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs, marginTop: theme.space.md },
+  openTripChip: { backgroundColor: theme.bg, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: theme.line },
+  openTripChipText: { fontSize: 12.5, color: theme.ink, fontWeight: theme.weight.medium },
   insightEmoji: { fontSize: 26 },
   insightTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   insightBody: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2, lineHeight: 16 },

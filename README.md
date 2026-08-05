@@ -5,8 +5,12 @@ Trip Creation, Traveler edit/remove, Expense Tracking (immutable), Note create/e
 Documents, complete Timeline (expenses + notes + documents + trip + traveler events),
 Settlement (derived), Offline Storage, Local Export, Read-only Share Page.
 
-Home screen is a lightweight launcher only — trip list + create — no dashboard widgets,
-weather, or smart cards. Those remain explicitly out of scope (Smart Cockpit / V2+).
+Home screen is a dashboard-centric experience — a consolidated "active trips" summary
+(spend today, pending settlements, active members) plus a per-trip hero card with cash
+left and pending drafts. The Smart Cockpit context card (time-of-day aware) lives inside
+each trip's Overview tab. The "lightweight launcher, no dashboard widgets" description
+that used to be here was accurate for an earlier phase and is now stale — updating it as
+part of the UX pass so this doesn't mislead the next reader.
 
 ## Get the APK
 1. Push to GitHub.

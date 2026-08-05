@@ -25,7 +25,12 @@ function resolveHeroContext({ tripStatus, cashLeft, pendingDraftsCount, hour, cu
   if (hour >= 18 && pendingDraftsCount > 0) {
     return { key: 'night', label: 'Pending drafts', value: String(pendingDraftsCount), sublabel: pendingDraftsCount === 1 ? 'One capture waiting to be finished' : 'Waiting to be turned into real records' };
   }
-  return { key: 'midday', label: 'Cash left', value: `${currencySymbol(currency)}${cashLeft}`, sublabel: cashLeft < 0 ? 'More has gone out than has come in so far' : 'Across all recorded contributions and spend' };
+  // Negative cash is a shortfall, not a debt to display as "-₹200" — that reads as a
+  // broken number to a non-accountant. "Needs ₹200" says the same fact as an action.
+  if (cashLeft < 0) {
+    return { key: 'midday', label: 'Shared cash', value: `Needs ${currencySymbol(currency)}${Math.abs(cashLeft)}`, sublabel: 'More has gone out than has come in so far' };
+  }
+  return { key: 'midday', label: 'Cash left', value: `${currencySymbol(currency)}${cashLeft}`, sublabel: 'Across all recorded contributions and spend' };
 }
 
 export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'active', pendingDraftsCount = 0, baseCurrency = 'INR', onChanged }) {
