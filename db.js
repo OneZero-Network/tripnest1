@@ -770,7 +770,7 @@ export async function recordBankSettlementLeg(tripId, fromName, toName, amount, 
     'INSERT INTO contributions (id, trip_id, traveler, amount, currency, fx_rate, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     id, tripId, traveler, signedAmount, baseCurrency, 1, ts
   );
-  const label = isTopUp ? `${traveler} topped up the Trip Bank with ${amount}` : `${traveler} was refunded ${amount} from the Trip Bank`;
+  const label = isTopUp ? `${traveler} topped up the Trip Bank with ${amount}` : `${traveler} got back ${amount} of unused Trip Bank contribution`;
   await logTimelineEvent({ tripId, type: 'contribution', title: label, timestamp: ts, idSuffix: '_t' });
   return id;
 }
@@ -847,11 +847,39 @@ export async function recordSettlement(tripId, from, to, amount) {
   return id;
 }
 
-export async function closeTrip(tripId) {
+// The "don't close with outstanding balances" rule previously lived only in
+// SettlementTab.js, as the visibility condition on the Finish Trip button — a UI
+// convenience, not a data-layer invariant. Anything else calling closeTrip() directly
+// (another screen, a future bulk action, a bug) bypassed it silently. Enforced here
+// instead, so it holds no matter which code path triggers closure.
+//
+// { force: true } is the deliberate override for a real "close anyway" case (e.g. an
+// admin action, or a trip nobody will ever finish settling) — it's explicit opt-in, not
+// a default, so accidentally closing a trip with money still owed stays hard to do by
+// accident and easy to do on purpose.
+export async function closeTrip(tripId, { force = false } = {}) {
   const db = await getDB();
+  if (!force) {
+    const { computeBankSettlement, computeSettlement } = await import('./finance/calculator');
+    const [bankSettlement, settlement] = await Promise.all([
+      computeBankSettlement(tripId),
+      computeSettlement(tripId),
+    ]);
+    const outstanding = bankSettlement.transactions.length + settlement.transactions.length;
+    if (outstanding > 0) {
+      return {
+        ok: false,
+        reason: 'unsettled',
+        outstandingCount: outstanding,
+        bankTransactions: bankSettlement.transactions,
+        personalTransactions: settlement.transactions,
+      };
+    }
+  }
   await db.runAsync("UPDATE trips SET status = 'closed' WHERE id = ?", tripId);
   const ts = Date.now();
-  await logTimelineEvent({ tripId, type: 'trip', title: 'Trip closed', timestamp: ts, idSuffix: '_close' });
+  await logTimelineEvent({ tripId, type: 'trip', title: force ? 'Trip closed (force-closed with balances outstanding)' : 'Trip closed', timestamp: ts, idSuffix: '_close' });
+  return { ok: true };
 }
 
 export async function reopenTrip(tripId) {
