@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { recordSettlement, recordBankSettlementLeg } from '../db';
+import { recordSettlement, recordBankSettlementLeg, closeTrip } from '../db';
 import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, SuccessToast, currencySymbol, useTheme } from './UI';
 
 // SIMPLIFIED SETTLEMENT: the founder's own words — "Users shouldn't learn accounting to
@@ -20,6 +20,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
   const [pendingSettle, setPendingSettle] = useState(null); // {from, to, amount}
   const [pendingSettleAll, setPendingSettleAll] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [pendingFinish, setPendingFinish] = useState(false);
   const cs = currencySymbol(finance.baseCurrency);
 
   // Once a trip is closed, "Trip Bank" stops being an intermediary someone can actually
@@ -116,7 +117,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
           <LedgerList>
             {toRefund.map((t, i) => (
               <LedgerRow key={i} icon="refund" isLast={i === toRefund.length - 1}>
-                <Text style={styles.line}>Refund to {t.to}</Text>
+                <Text style={styles.line}>Return to {t.to}</Text>
                 <Text style={styles.amount}>{cs}{t.amount}</Text>
               </LedgerRow>
             ))}
@@ -160,6 +161,19 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
         />
       )}
 
+      {/* Nothing pending and the trip is still Active — this is the "solo trip / fully
+          settled trip stays open forever with no way to end it" gap. Surfacing Finish
+          Trip right here, exactly where the person can see there's nothing left to do,
+          beats making them go find it under a settings gear icon. */}
+      {toRefund.length + toPay.length === 0 && finance.tripStatus === 'active' && (
+        <PrimaryButton
+          label="Finish Trip"
+          icon="check-circle"
+          onPress={() => setPendingFinish(true)}
+          style={{ marginBottom: theme.space.md }}
+        />
+      )}
+
       {onOpenAdvanced && (
         <Text style={styles.advancedLink} onPress={onOpenAdvanced}>View detailed breakdown →</Text>
       )}
@@ -181,6 +195,24 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
         confirmLabel="Mark all settled"
         onConfirm={confirmSettleAll}
         onCancel={() => setPendingSettleAll(false)}
+      />
+      <ConfirmDialog
+        visible={pendingFinish}
+        title="Finish this trip?"
+        message="Marks the trip as complete. You can still view everything afterward — this just moves it out of Active."
+        confirmLabel="Finish Trip"
+        onConfirm={async () => {
+          setPendingFinish(false);
+          // closeTrip now re-checks for outstanding balances itself (not just this
+          // screen's button visibility), so a stale screen — e.g. someone else added an
+          // expense between this screen loading and this tap — can't slip a trip closed
+          // while money is still owed. ok:false here means the data changed underneath
+          // us; just refresh so the up-to-date pending list shows instead of closing.
+          const result = await closeTrip(tripId);
+          if (!result.ok) { onChanged(); return; }
+          onChanged();
+        }}
+        onCancel={() => setPendingFinish(false)}
       />
     </View>
   );
