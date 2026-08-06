@@ -123,7 +123,18 @@ export default function CreateTripScreen({ navigation }) {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.safe, { paddingTop: insets.top + 16 }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={[styles.safe, { paddingTop: insets.top + 16 }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // Android was previously passed `behavior={undefined}`, which makes
+      // KeyboardAvoidingView a no-op — the keyboard simply overlaps whatever it covers
+      // instead of the view shrinking to make room. On this screen that meant the
+      // Shared Money section and the Create button underneath it, which is exactly
+      // the "keyboard takes over the screen" report. `insets.top` is already added to
+      // paddingTop above and would otherwise double-count against the keyboard offset,
+      // so it's subtracted back out here.
+      keyboardVerticalOffset={Platform.OS === 'android' ? -insets.top : 0}
+    >
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Feather name="arrow-left" size={22} color={theme.ink} />
