@@ -106,6 +106,21 @@ export async function computeBankSettlement(tripId) {
   }
   const { owedByPerson } = await computeExpenseShares(db, bankExpenses, travelerNames);
 
+  // Nothing has actually happened to the Trip Bank yet — money went in, nothing's gone
+  // out of it. Without this guard, every uncontributed-equally trip (or even an equally
+  // contributed one, the moment fx rounding kicks in) shows every traveler's FULL
+  // contribution back as a "pending settlement" the instant the trip is created — before
+  // a single expense exists. That's not a debt owed, it's just unspent shared money
+  // sitting where it's supposed to sit. This only suppresses the LIVE/ongoing settlement
+  // (the badge, the notification count, the Settle tab while the trip is active) —
+  // computeFinalBankSettlement, used when a trip is actually closed, is untouched, so
+  // unspent contributions still get correctly returned at trip end.
+  if (bankExpenses.length === 0) {
+    const balances = {};
+    travelers.forEach((t) => (balances[t.name] = 0));
+    return { balances, transactions: [], sharedSpendByPerson: owedByPerson };
+  }
+
   const contributedByPerson = {};
   travelers.forEach((t) => (contributedByPerson[t.name] = 0));
   contributions.forEach((c) => {
@@ -253,10 +268,48 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   const bankSpent = bankSpentRow.total;
   const personalSpent = personalSpentRow.total;
   const totalSpent = bankSpent + personalSpent;
-  // "Current balance" is the Trip Bank's own cash position — contributions in, bank-funded
-  // spend out. Personal expenses don't touch it; they're a separate peer-to-peer matter,
-  // which is exactly the distinction the old single-bucket model was missing.
-  const currentCash = totalReceived - bankSpent;
+
+  const baseCurrency = trip?.base_currency || 'INR';
+  // A currency exchange moves real cash OUT of the Trip Bank the moment it happens — the
+  // ₹3000 is gone from the pool whether or not any of the resulting $100 has been spent
+  // yet. Previously this was never subtracted anywhere: bankSpent only counted expenses,
+  // so an exchange with nothing spent from it yet left currentCash overstated by the full
+  // converted amount, and the Overview screen showed the (unreduced) Trip Bank total next
+  // to the (separately tracked) foreign wallet as if both were independently available.
+  // Only exchanges FROM the trip's own base currency are a real bank debit; a rarer
+  // foreign-to-foreign conversion doesn't touch the base-currency pool and is skipped here
+  // (from_amount in that case isn't in base-currency terms and would corrupt the total).
+  const exchangedOutRow = await db.getFirstAsync(
+    "SELECT COALESCE(SUM(from_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND from_currency = ?",
+    tripId, baseCurrency
+  );
+  const exchangedOutBase = exchangedOutRow.total;
+
+  // Bank-tagged expenses paid in a currency the trip has exchanged into are spend AGAINST
+  // that foreign wallet, not a second draw on the base-currency pool — the cash for those
+  // already left the bank at exchange time (see exchangedOutBase above). Counting them
+  // again here would double-debit the same rupees once at conversion and once at spend.
+  // Bank-tagged expenses in the base currency (or any currency the trip never exchanged
+  // into — e.g. a stray charge in a currency with no wallet) are still a direct, first-time
+  // draw on the bank and must be subtracted normally.
+  const walletCurrencyRows = await db.getAllAsync(
+    'SELECT DISTINCT to_currency FROM currency_exchanges WHERE trip_id = ?', tripId
+  );
+  const walletCurrencies = new Set(walletCurrencyRows.map((r) => r.to_currency));
+  const bankExpenseRows = await db.getAllAsync(
+    "SELECT amount, fx_rate, currency FROM expenses WHERE trip_id = ? AND funding_source = 'bank'", tripId
+  );
+  const domesticBankSpent = bankExpenseRows.reduce((s, e) => {
+    if (walletCurrencies.has(e.currency)) return s; // already covered by exchangedOutBase
+    return s + e.amount * e.fx_rate;
+  }, 0);
+
+  // "Current balance" is the Trip Bank's own cash position — contributions in, minus
+  // whatever has actually left the pool: direct base-currency bank spend, plus anything
+  // converted into a foreign wallet (spent or not — it left the bank either way). Personal
+  // expenses don't touch it; they're a separate peer-to-peer matter, which is exactly the
+  // distinction the old single-bucket model was missing.
+  const currentCash = totalReceived - domesticBankSpent - exchangedOutBase;
   const settlement = precomputedSettlement ?? await computeSettlement(tripId);
   const bankSettlement = await computeBankSettlement(tripId);
   // Only computed when actually needed — closed trips are the exception, not the common
@@ -281,7 +334,11 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
       const spentMap = {};
       spentByPerson.forEach((r) => { spentMap[r.paid_by] = r.total; });
       const byPerson = convertedByPerson.map((r) => ({ converted_by: r.converted_by, total: r.total, spent: spentMap[r.converted_by] || 0, remaining: r.total - (spentMap[r.converted_by] || 0) }));
-      foreignWallets.push({ currency: c, exchanged: exchanged.total, spent: fxSpent.total, remaining: exchanged.total - fxSpent.total, byPerson });
+      // Every individual conversion that adds up to the total above — a lumped "150 USD"
+      // number with no way to see where it came from isn't trustworthy in a finance app,
+      // per the exact complaint: show "100 + 50 = 150", not just "150".
+      const exchangeEntries = await db.getAllAsync('SELECT to_amount FROM currency_exchanges WHERE trip_id = ? AND to_currency = ? ORDER BY created_at ASC', tripId, c);
+      foreignWallets.push({ currency: c, exchanged: exchanged.total, spent: fxSpent.total, remaining: exchanged.total - fxSpent.total, byPerson, exchangeAmounts: exchangeEntries.map((r) => r.to_amount) });
     }
   }
   // Kept for anything still reading the singular field — the trip's default currency's
@@ -303,6 +360,10 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
     bankSpent,
     personalSpent,
     currentCash,
+    // Surfaced separately from bankSpent so the UI can show, if it wants to, how much of
+    // the Trip Bank drawdown came from currency exchange vs. direct base-currency spend —
+    // rather than silently folding it into one number the way currentCash necessarily does.
+    exchangedOutBase,
     perPerson,
     fundTarget,
     travelerCount,
