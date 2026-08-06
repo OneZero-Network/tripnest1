@@ -104,6 +104,27 @@ export default function OverviewTab({ finance, timeline, today, expenses = [], t
             </TouchableOpacity>
           </View>
 
+          {finance.foreignWallets && finance.foreignWallets.length > 0 && (
+            <Card style={{ padding: theme.space.md, marginTop: theme.space.sm }}>
+              {finance.foreignWallets.map((w, i) => (
+                <View key={w.currency} style={i > 0 ? { marginTop: theme.space.sm, paddingTop: theme.space.sm, borderTopWidth: 1, borderTopColor: theme.line } : undefined}>
+                  <Text style={styles.walletLabel}>{w.currency} wallet</Text>
+                  <Text style={styles.walletValue}>{w.currency} {w.remaining.toLocaleString()}</Text>
+                  <Text style={styles.walletSub}>
+                    Converted {w.currency} {w.exchanged.toLocaleString()} · Spent {w.currency} {w.spent.toLocaleString()}
+                  </Text>
+                  {w.byPerson && w.byPerson.length > 0 && (
+                    <View style={{ marginTop: theme.space.xs }}>
+                      {w.byPerson.map((p) => (
+                        <Text key={p.converted_by} style={styles.walletPerson}>{p.converted_by}: {w.currency} {p.remaining.toLocaleString()} left (converted {w.currency} {p.total.toLocaleString()})</Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </Card>
+          )}
+
           <Card style={{ padding: theme.space.md, marginTop: theme.space.lg, marginBottom: theme.space.xxl }}>
             <SectionHeader title="Latest activity" />
             {recent.length === 0 ? (
@@ -127,7 +148,11 @@ export default function OverviewTab({ finance, timeline, today, expenses = [], t
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1 },
+  walletLabel: { fontSize: theme.type.caption, color: theme.inkMute, textTransform: 'uppercase', fontWeight: theme.weight.semibold },
+  walletValue: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginTop: 2 },
+  walletSub: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
+  walletPerson: { fontSize: 11.5, color: theme.inkMute, marginTop: 1 },
+  section: { flex: 1, paddingBottom: 88 }, // clears the floating action button, same fix as SettlementTab
   tripName: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.sm, letterSpacing: -0.3 },
   welcomeTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink },
   welcomeBody: { fontSize: theme.type.body, color: theme.inkMute, marginTop: theme.space.xs, lineHeight: 20 },

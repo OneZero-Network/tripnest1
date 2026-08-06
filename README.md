@@ -1,7 +1,7 @@
 # TripNest (V1 scaffold)
 
 Offline-first trip logbook. Covers the full V1 "must complete" list:
-Trip Creation, Traveler edit/remove, Expense Tracking (immutable), Note create/edit/delete,
+Trip Creation, Traveler edit/remove, Expense Tracking (immutable — see note below), Note create/edit/delete,
 Documents, complete Timeline (expenses + notes + documents + trip + traveler events),
 Settlement (derived), Offline Storage, Local Export, Read-only Share Page.
 
@@ -11,6 +11,15 @@ left and pending drafts. The Smart Cockpit context card (time-of-day aware) live
 each trip's Overview tab. The "lightweight launcher, no dashboard widgets" description
 that used to be here was accurate for an earlier phase and is now stale — updating it as
 part of the UX pass so this doesn't mislead the next reader.
+
+NOTE on "Expense Tracking (immutable)" above: this is accurate to the code as it stands
+today — there is no edit path for a recorded expense or contribution yet, only delete.
+Product direction is now pointed at adding editing (amount/category/split/payer/source),
+which is a real change to make once it's built, not a docs fix to make now: the plan is
+NOT to make expenses silently mutable, but "edit creates a new version, old version stays
+in the timeline as an audit entry" (Expense edited → previous version preserved → timeline
+updated) — so the eventual state is still tamper-evident, just editable. Until that's
+actually implemented, don't change this line to claim editing exists.
 
 ## Get the APK
 1. Push to GitHub.

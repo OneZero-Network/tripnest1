@@ -109,7 +109,7 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
         <Card style={{ padding: theme.space.lg, marginBottom: theme.space.md, backgroundColor: theme.brandDeep, borderWidth: 0 }}>
           <View style={styles.poolHeaderRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.poolLabel}>TRIP BANK POOL</Text>
+              <Text style={styles.poolLabel}>TRIP BANK</Text>
               <Text style={styles.poolValue}>{cs}{(finance?.totalReceived || 0).toFixed(0)}</Text>
               <Text style={styles.poolSub}>Contributed by {travelers.length} member{travelers.length === 1 ? '' : 's'}</Text>
             </View>
@@ -118,6 +118,16 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
             </TouchableOpacity>
           </View>
         </Card>
+      )}
+
+      {/* Without a Trip Bank card, there was no way at all to reach trip settings (trip
+          type / foreign currency included) — this is the fallback entry point for exactly
+          that case, most commonly a solo trip with no shared pool. */}
+      {finance?.hasTripBank === false && (
+        <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.settingsLink} accessibilityLabel="Trip settings" accessibilityRole="button">
+          <Feather name="settings" size={14} color={theme.inkMute} />
+          <Text style={styles.settingsLinkText}>Trip settings</Text>
+        </TouchableOpacity>
       )}
 
       {travelers.length === 0 ? (
@@ -244,7 +254,9 @@ function DetailLine({ label, value, strong }) {
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1, paddingBottom: theme.space.xxl },
+  settingsLink: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: theme.space.sm, minHeight: theme.a11y.minTouchTarget, paddingHorizontal: 4 },
+  settingsLinkText: { fontSize: theme.type.caption, color: theme.inkMute, fontWeight: theme.weight.semibold },
+  section: { flex: 1, paddingBottom: 88 },
   row: { flexDirection: 'row' },
   editRow: { padding: theme.space.md },
   ledgerDivider: { borderBottomWidth: 1, borderBottomColor: theme.line },

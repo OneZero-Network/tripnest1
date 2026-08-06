@@ -8,6 +8,7 @@ const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'expense', label: 'Expenses' },
   { key: 'contribution', label: 'Contributions' },
+  { key: 'exchange', label: 'Exchanges' },
   { key: 'note', label: 'Notes' },
   { key: 'document', label: 'Docs' },
 ];
@@ -62,7 +63,7 @@ export default function TimelineTab({ timeline, baseCurrency = 'INR', onOpenItem
               return (
                 <View key={bi} style={styles.activityBlock}>
                   {block.events.map((ev) => {
-                    const openable = onOpenItem && ['expense', 'note', 'document'].includes(ev.type) && ev.metadata;
+                    const openable = onOpenItem && ['expense', 'note', 'document', 'contribution', 'exchange'].includes(ev.type) && ev.metadata;
                     const Row = openable ? TouchableOpacity : View;
                     let meta = null;
                     try { meta = ev.metadata ? JSON.parse(ev.metadata) : null; } catch {}
@@ -71,13 +72,26 @@ export default function TimelineTab({ timeline, baseCurrency = 'INR', onOpenItem
                     // enough metadata to render richly (category, payer, amount / a real
                     // filename) — everything else keeps the plain one-line sentence,
                     // which is fine for rarer events like "Trip created."
+                    if (ev.type === 'expense' && meta?.edited) {
+                      const fmt = (v) => (meta.field === 'amount' ? `${cs}${v}` : v ?? '—');
+                      return (
+                        <Row key={ev.id} style={styles.diaryRow} onPress={openable ? () => onOpenItem(ev) : undefined}>
+                          <Text style={styles.diaryEmoji}>✏️</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.diaryTitle}>Edited {meta.category || 'expense'}</Text>
+                            <Text style={styles.diarySub}>{fmt(meta.oldValue)} → {fmt(meta.newValue)}</Text>
+                          </View>
+                          <Text style={styles.diaryTime}>{blockTime}</Text>
+                        </Row>
+                      );
+                    }
                     if (ev.type === 'expense' && meta?.category) {
                       return (
                         <Row key={ev.id} style={styles.diaryRow} onPress={openable ? () => onOpenItem(ev) : undefined}>
                           <Text style={styles.diaryEmoji}>{CATEGORY_EMOJI[meta.category] || '🧾'}</Text>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.diaryTitle}>{meta.category}</Text>
-                            <Text style={styles.diarySub}>{meta.paidBy} paid {cs}{meta.amount}{meta.currency !== baseCurrency ? ` ${meta.currency}` : ''}</Text>
+                            <Text style={styles.diarySub}>{meta.paidBy} paid {cs}{meta.amount}{meta.currency !== baseCurrency ? ` ${meta.currency}` : ''}{meta.fundingSource === 'bank' ? ' · Trip Bank' : meta.fundingSource === 'personal' ? ' · Personal' : ''}</Text>
                           </View>
                           <Text style={styles.diaryTime}>{blockTime}</Text>
                         </Row>
@@ -114,7 +128,7 @@ export default function TimelineTab({ timeline, baseCurrency = 'INR', onOpenItem
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1 },
+  section: { flex: 1, paddingBottom: 88 }, // clears the floating action button, same fix as SettlementTab
   filterRow: { flexGrow: 0, marginBottom: theme.space.md },
   dayGroup: { marginBottom: theme.space.lg },
   dayHeading: { fontWeight: theme.weight.semibold, fontSize: theme.type.heading, color: theme.ink, marginBottom: theme.space.sm, borderBottomWidth: 1, borderBottomColor: theme.line, paddingBottom: 6, letterSpacing: -0.2 },

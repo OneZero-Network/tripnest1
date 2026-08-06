@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
-import { setContributionPerPerson, setCustodian, closeTrip, reopenTrip } from '../db';
-import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, currencySymbol, useTheme } from './UI';
+import { setContributionPerPerson, setCustodian, closeTrip, reopenTrip, setTripType } from '../db';
+import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, Chip, currencySymbol, useTheme } from './UI';
+
+const COMMON_FX = ['USD', 'EUR', 'GBP', 'AED', 'THB', 'SAR', 'JPY'];
 
 // Trip Bank setup (who holds the cash, what the per-person target is) and trip lifecycle
 // (close/reopen) used to live inside Advanced as input forms mixed in with a read-only
@@ -14,6 +16,8 @@ export default function TripBankSettingsSheet({ tripId, finance, visible, onClos
   const [custodianInput, setCustodianInput] = useState(finance.custodian || '');
   const [perPersonInput, setPerPersonInput] = useState('');
   const [pendingClose, setPendingClose] = useState(false);
+  const [tripTypeDraft, setTripTypeDraft] = useState(finance.tripType || 'domestic');
+  const [fxDraft, setFxDraft] = useState(finance.foreignCurrency || '');
   const cs = currencySymbol(finance.baseCurrency);
   const fundShort = finance.fundTarget != null ? finance.fundTarget - finance.totalReceived : null;
 
@@ -36,6 +40,21 @@ export default function TripBankSettingsSheet({ tripId, finance, visible, onClos
     await closeTrip(tripId);
     onChanged();
     onClose();
+  };
+
+  const saveTripType = async (type) => {
+    setTripTypeDraft(type);
+    if (type === 'domestic') {
+      await setTripType(tripId, 'domestic', null);
+      onChanged();
+    }
+    // 'international' isn't saved until a currency is picked below — see saveFx.
+  };
+
+  const saveFx = async (currency) => {
+    setFxDraft(currency);
+    await setTripType(tripId, 'international', currency);
+    onChanged();
   };
 
   return (
@@ -66,6 +85,24 @@ export default function TripBankSettingsSheet({ tripId, finance, visible, onClos
           <TextInput style={styles.input} placeholder="Amount per person" placeholderTextColor={theme.inkMute} value={perPersonInput} onChangeText={setPerPersonInput} keyboardType="numeric" />
           <PrimaryButton label="Set" onPress={saveFundTarget} style={{ marginStart: theme.space.sm }} />
         </View>
+
+        <View style={styles.divider} />
+
+        <Text style={styles.label}>Trip type</Text>
+        <View style={styles.row}>
+          <Chip label="Domestic" active={tripTypeDraft === 'domestic'} onPress={() => saveTripType('domestic')} />
+          <Chip label="International" active={tripTypeDraft === 'international'} onPress={() => setTripTypeDraft('international')} />
+        </View>
+        {tripTypeDraft === 'international' && (
+          <>
+            <Text style={[styles.mutedValue, { marginTop: theme.space.sm }]}>Foreign currency wallet</Text>
+            <View style={[styles.row, { flexWrap: 'wrap', gap: theme.space.xs }]}>
+              {COMMON_FX.map((c) => (
+                <Chip key={c} label={c} active={fxDraft === c} onPress={() => saveFx(c)} />
+              ))}
+            </View>
+          </>
+        )}
 
         <View style={styles.divider} />
 

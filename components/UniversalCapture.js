@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { addExpense, addNote, addItineraryItem, addContribution } from '../db';
+import { addExpense, addNote, addItineraryItem, addContribution, addCurrencyExchange, getLatestExchangeRate } from '../db';
 import { pickAndAddDocument } from '../tripExport';
 import { PrimaryButton, IconBadge, BottomSheet, Chip, SuccessToast, useTheme } from './UI';
 
@@ -20,17 +20,18 @@ const CATEGORIES = ['Food', 'Transport', 'Stay', 'Shopping', 'Other'];
 const ALL_ACTIONS = [
   { key: 'expense', label: 'Add Expense', icon: 'expense' },
   { key: 'contribution', label: 'Add Contribution', icon: 'contribution' },
+  { key: 'exchange', label: 'Exchange Currency', icon: 'exchange' },
   { key: 'note', label: 'Add Note', icon: 'note' },
   { key: 'plan', label: 'Add Plan Item', icon: 'itinerary' },
   { key: 'document', label: 'Attach Document', icon: 'document' },
   { key: 'draft', label: 'Quick Draft', icon: 'draft', tone: 'accent' },
 ];
 
-export default function UniversalCapture({ tripId, navigation, travelers = [], baseCurrency = 'INR', hasTripBank = true, onChanged }) {
+export default function UniversalCapture({ tripId, navigation, travelers = [], baseCurrency = 'INR', hasTripBank = true, tripType = 'domestic', foreignCurrency = null, onChanged }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
-  const ACTIONS = hasTripBank ? ALL_ACTIONS : ALL_ACTIONS.filter((a) => a.key !== 'contribution');
+  const ACTIONS = ALL_ACTIONS.filter((a) => (a.key === 'contribution' ? hasTripBank : true)).filter((a) => (a.key === 'exchange' ? tripType === 'international' : true));
   const [open, setOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
   const [text, setText] = useState('');
@@ -45,6 +46,11 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
   const [fxRate, setFxRate] = useState('');
   const [showCurrency, setShowCurrency] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [formError, setFormError] = useState(null);
+  const [exFromAmount, setExFromAmount] = useState('');
+  const [exToAmount, setExToAmount] = useState('');
+  const [exCurrency, setExCurrency] = useState(foreignCurrency);
+  const [exConvertedBy, setExConvertedBy] = useState(null);
 
   const isForeign = currency !== baseCurrency;
 
@@ -52,8 +58,9 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
     setActiveAction(null); setText(''); setAmount(''); setPayer(null);
     setFundingSource('personal'); setCategory(null); setCustomCategory(''); setContribTraveler(null);
     setCurrency(baseCurrency); setFxRate(''); setShowCurrency(false); setSplitParticipants(null);
+    setExFromAmount(''); setExToAmount(''); setExCurrency(foreignCurrency); setExConvertedBy(null);
   };
-  const close = () => { setOpen(false); reset(); };
+  const close = () => { setOpen(false); reset(); setFormError(null); };
 
   // Toggling a traveler off the split, starting from the implicit "everyone" default —
   // only becomes an explicit list the moment someone's actually excluded.
@@ -78,14 +85,38 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
       return;
     }
     setActiveAction(key);
+    setFormError(null);
+    // Default "Who paid" to the first traveler — for most expenses the payer is either
+    // the app's own user or whoever's already habit is to pay, so requiring an extra tap
+    // to select someone who's selected 9 times out of 10 anyway was pure friction. Still
+    // fully overridable with one tap on another chip.
+    if (key === 'expense' && travelers.length > 0) setPayer(travelers[0].name);
+    // On an international trip, day-to-day spend is overwhelmingly in the foreign
+    // currency, not the home one — defaulting to base currency meant re-selecting the
+    // foreign currency AND retyping its exchange rate on every single expense, even
+    // though the rate was already known from the wallet's own conversion history. This
+    // pre-fills both; the rate stays a plain editable field since it can drift entry to
+    // entry, this is just a starting point, not a locked value.
+    if (key === 'expense' && tripType === 'international' && foreignCurrency) {
+      setCurrency(foreignCurrency);
+      getLatestExchangeRate(tripId, foreignCurrency).then((rate) => {
+        if (rate) setFxRate(String(rate));
+      });
+    }
+    if (key === 'exchange') { setExCurrency(foreignCurrency); setExConvertedBy(travelers.length === 1 ? travelers[0].name : null); }
   };
 
   const submit = async () => {
+    setFormError(null);
     if (activeAction === 'expense') {
       const amt = parseFloat(amount);
-      if (!amt || !payer) return;
-      if (isForeign && !parseFloat(fxRate)) return;
-      if (splitParticipants && splitParticipants.length === 0) return; // must split among at least one person
+      // Silently returning here (the old behavior) left the user staring at a Save
+      // button that just... didn't do anything, with no clue why. Every one of these
+      // now tells them exactly what to fix, matching the "red border + message" ask.
+      if (!amt) return setFormError('Enter an amount');
+      if (!payer) return setFormError('Choose who paid');
+      if (isForeign && !parseFloat(fxRate)) return setFormError('Enter an exchange rate');
+      if (splitParticipants && splitParticipants.length === 0) return setFormError('Split between at least one person');
       // "Other" needs its own label — saving it as the literal string "Other" with no
       // way to say what it actually was is exactly what made this feel stuck/incomplete.
       const finalCategory = category === 'Other' ? (customCategory.trim() || 'Other') : category;
@@ -95,13 +126,21 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
       });
     } else if (activeAction === 'contribution') {
       const amt = parseFloat(amount);
-      if (!amt || !contribTraveler) return;
+      if (!amt) return setFormError('Enter an amount');
+      if (!contribTraveler) return setFormError('Choose who contributed');
       await addContribution(tripId, contribTraveler, amt);
+    } else if (activeAction === 'exchange') {
+      const fromAmt = parseFloat(exFromAmount);
+      const toAmt = parseFloat(exToAmount);
+      if (!fromAmt) return setFormError(`Enter ${baseCurrency} given`);
+      if (!exCurrency) return setFormError('Choose a currency');
+      if (!toAmt) return setFormError(`Enter ${exCurrency} received`);
+      await addCurrencyExchange(tripId, fromAmt, baseCurrency, toAmt, exCurrency, exConvertedBy);
     } else if (activeAction === 'note') {
-      if (!text.trim()) return;
+      if (!text.trim()) return setFormError('Write something first');
       await addNote(tripId, text.trim());
     } else if (activeAction === 'plan') {
-      if (!text.trim()) return;
+      if (!text.trim()) return setFormError('Give the plan a title');
       await addItineraryItem(tripId, text.trim(), Date.now(), null);
     }
     setSavedAt(Date.now());
@@ -169,7 +208,7 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
                 )}
 
                 <View style={styles.amountRow}>
-                  <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" />
+                  <TextInput style={[styles.input, { flex: 1, marginBottom: 0 }, formError === 'Enter an amount' && styles.inputError]} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" />
                   <Text style={styles.currencyToggle} onPress={() => setShowCurrency((v) => !v)}>{currency} {showCurrency ? '▴' : '▾'}</Text>
                 </View>
                 {showCurrency && (
@@ -227,7 +266,49 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
                     ))}
                   </View>
                 )}
-                <TextInput style={styles.input} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" autoFocus />
+                <TextInput style={[styles.input, formError === 'Enter an amount' && styles.inputError]} placeholder="Amount" placeholderTextColor={theme.inkMute} value={amount} onChangeText={setAmount} keyboardType="numeric" autoFocus />
+              </>
+            )}
+
+            {activeAction === 'exchange' && (
+              <>
+                {travelers.length > 1 && (
+                  <>
+                    <Text style={styles.fieldLabel}>Who converted?</Text>
+                    <View style={styles.chipRow}>
+                      {travelers.map((t) => (
+                        <Chip key={t.id} label={t.name} active={exConvertedBy === t.name} onPress={() => setExConvertedBy(t.name)} />
+                      ))}
+                    </View>
+                  </>
+                )}
+                <Text style={styles.fieldLabel}>Currency</Text>
+                <View style={styles.chipRow}>
+                  {[foreignCurrency, ...['USD', 'EUR', 'GBP', 'AED', 'THB', 'SAR', 'JPY'].filter((c) => c !== foreignCurrency)].filter(Boolean).map((c) => (
+                    <Chip key={c} label={c} active={exCurrency === c} onPress={() => setExCurrency(c)} />
+                  ))}
+                </View>
+                <Text style={styles.fieldLabel}>{baseCurrency} given</Text>
+                <TextInput
+                  style={[styles.input, formError?.includes(baseCurrency) && styles.inputError]}
+                  placeholder="0"
+                  placeholderTextColor={theme.inkMute}
+                  value={exFromAmount}
+                  onChangeText={setExFromAmount}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.fieldLabel}>{exCurrency || 'Foreign currency'} received</Text>
+                <TextInput
+                  style={[styles.input, formError?.includes('received') && styles.inputError]}
+                  placeholder="0"
+                  placeholderTextColor={theme.inkMute}
+                  value={exToAmount}
+                  onChangeText={setExToAmount}
+                  keyboardType="numeric"
+                />
+                {exFromAmount && exToAmount && parseFloat(exToAmount) > 0 && (
+                  <Text style={styles.hint}>Rate: 1 {exCurrency} = {baseCurrency}{(parseFloat(exFromAmount) / parseFloat(exToAmount)).toFixed(2)}</Text>
+                )}
               </>
             )}
 
@@ -242,6 +323,12 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
               />
             )}
 
+            {formError && (
+              <View style={styles.errorBanner}>
+                <Feather name="alert-circle" size={14} color={theme.danger} />
+                <Text style={styles.errorText}>{formError}</Text>
+              </View>
+            )}
             <PrimaryButton label="Save" icon="check" onPress={submit} style={{ marginTop: theme.space.sm }} />
           </>
         )}
@@ -251,6 +338,8 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
 }
 
 const makeStyles = (theme) => StyleSheet.create({
+  errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dangerWash || 'rgba(220,80,80,0.12)', borderRadius: theme.radius.sm, padding: theme.space.sm, marginTop: theme.space.sm },
+  errorText: { color: theme.danger, fontSize: theme.type.caption, fontWeight: theme.weight.semibold, flex: 1 },
   fab: {
     position: 'absolute', end: theme.space.lg, width: 45, height: 45, borderRadius: 23,
     backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center',
@@ -262,6 +351,7 @@ const makeStyles = (theme) => StyleSheet.create({
   actionText: { flex: 1, fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   activeHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, marginBottom: theme.space.lg },
   input: { backgroundColor: theme.bg, borderRadius: theme.radius.sm, paddingHorizontal: 14, minHeight: theme.a11y.minTouchTarget, borderWidth: 1, borderColor: theme.line, marginBottom: theme.space.sm, color: theme.ink },
+  inputError: { borderColor: theme.danger },
   hint: { color: theme.inkMute, fontSize: 11.5, marginBottom: theme.space.sm },
   fieldLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, marginBottom: theme.space.xs, marginTop: theme.space.xs, textTransform: 'uppercase', letterSpacing: 0.4 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },

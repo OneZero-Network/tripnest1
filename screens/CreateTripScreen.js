@@ -23,6 +23,15 @@ export default function CreateTripScreen({ navigation }) {
   const [baseCurrency, setBaseCurrency] = useState('INR');
   const [hasTripBank, setHasTripBank] = useState(false);
   const [contributionAmounts, setContributionAmounts] = useState({}); // { travelerName: '500' }
+  const [nameError, setNameError] = useState(false);
+  const [contributionErrors, setContributionErrors] = useState({}); // { travelerName: true }
+  const totalContributions = Object.values(contributionAmounts).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+  const [tripType, setTripType] = useState('domestic');
+  const [foreignCurrency, setForeignCurrency] = useState('');
+  const [exchangeRows, setExchangeRows] = useState([]); // [{ fromAmount, toAmount }]
+  const [exFrom, setExFrom] = useState('');
+  const [exTo, setExTo] = useState('');
+  const totalExchanged = exchangeRows.reduce((s, r) => s + (parseFloat(r.toAmount) || 0), 0);
 
   const addTraveler = () => {
     const trimmed = travelerInput.trim();
@@ -35,7 +44,26 @@ export default function CreateTripScreen({ navigation }) {
   const removeTraveler = (t) => setTravelers((prev) => prev.filter((x) => x !== t));
 
   const createTrip = async () => {
-    if (!name.trim() || saving) return;
+    if (saving) return;
+    if (!name.trim()) { setNameError(true); return; }
+    setNameError(false);
+    // A negative contribution isn't a typo the engine can quietly absorb — it would
+    // silently invert someone's Trip Bank balance (looking like they're owed money for
+    // "contributing" a negative amount). Catch it here, on the exact field, rather than
+    // downstream in a confusing settlement number with no visible cause.
+    if (hasTripBank) {
+      const bad = {};
+      travelers.forEach((t) => {
+        const v = parseFloat(contributionAmounts[t]);
+        if (contributionAmounts[t] && (isNaN(v) || v < 0)) bad[t] = true;
+      });
+      if (Object.keys(bad).length > 0) { setContributionErrors(bad); return; }
+    }
+    setContributionErrors({});
+    // International trips need a foreign currency picked before they're worth anything —
+    // an "International" trip with no currency to convert into can't compute a wallet
+    // balance, so this is required exactly the way "Trip name" is.
+    if (tripType === 'international' && !foreignCurrency) { return; }
     setSaving(true);
     const db = await getDB();
     const id = String(Date.now());
@@ -46,7 +74,7 @@ export default function CreateTripScreen({ navigation }) {
     // row with only some of its travelers inserted, with no signal that it happened.
     try {
       await db.withTransactionAsync(async () => {
-        await db.runAsync('INSERT INTO trips (id, name, base_currency, has_trip_bank, created_at) VALUES (?, ?, ?, ?, ?)', id, name.trim(), baseCurrency, hasTripBank ? 1 : 0, ts);
+        await db.runAsync('INSERT INTO trips (id, name, base_currency, has_trip_bank, trip_type, foreign_currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', id, name.trim(), baseCurrency, hasTripBank ? 1 : 0, tripType, tripType === 'international' ? foreignCurrency : null, ts);
         for (const t of travelers) {
           const tid = String(Date.now()) + Math.random().toString(36).slice(2);
           await db.runAsync('INSERT INTO travelers (id, trip_id, name) VALUES (?, ?, ?)', tid, id, t);
@@ -74,6 +102,19 @@ export default function CreateTripScreen({ navigation }) {
         if (anyContribution) {
           await logTimelineEvent({ tripId: id, type: 'contribution', title: 'Initial contributions added at setup', timestamp: ts + 1, idSuffix: '_initcontrib' });
         }
+        if (tripType === 'international' && exchangeRows.length > 0) {
+          for (const row of exchangeRows) {
+            const fromAmt = parseFloat(row.fromAmount);
+            const toAmt = parseFloat(row.toAmount);
+            if (!fromAmt || !toAmt) continue;
+            const exId = String(Date.now()) + Math.random().toString(36).slice(2);
+            await db.runAsync(
+              'INSERT INTO currency_exchanges (id, trip_id, from_amount, from_currency, to_amount, to_currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              exId, id, fromAmt, baseCurrency, toAmt, foreignCurrency, ts
+            );
+          }
+          await logTimelineEvent({ tripId: id, type: 'exchange', title: 'Initial currency exchange added at setup', timestamp: ts + 2, idSuffix: '_initexchange' });
+        }
       });
       navigation.replace('Trip', { tripId: id, tripName: name.trim() });
     } finally {
@@ -94,13 +135,14 @@ export default function CreateTripScreen({ navigation }) {
       <View style={styles.body}>
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>        <Text style={styles.label}>Trip Name</Text>
         <TextInput
-          style={styles.nameInput}
+          style={[styles.nameInput, nameError && styles.inputError]}
           placeholder="e.g. Goa Trip"
           placeholderTextColor={theme.inkMute}
           value={name}
-          onChangeText={setName}
+          onChangeText={(t) => { setName(t); if (nameError) setNameError(false); }}
           autoFocus
         />
+        {nameError && <Text style={styles.errorText}>Trip name required</Text>}
 
         <Text style={[styles.label, { marginTop: theme.space.xl }]}>Currency</Text>
         <View style={styles.currencyRow}>
@@ -108,6 +150,73 @@ export default function CreateTripScreen({ navigation }) {
             <Chip key={c} label={c} active={baseCurrency === c} onPress={() => setBaseCurrency(c)} />
           ))}
         </View>
+
+        <Text style={[styles.label, { marginTop: theme.space.xl }]}>Trip type</Text>
+        <View style={styles.currencyRow}>
+          <Chip label="Domestic" active={tripType === 'domestic'} onPress={() => setTripType('domestic')} />
+          <Chip label="International" active={tripType === 'international'} onPress={() => setTripType('international')} />
+        </View>
+
+        {tripType === 'international' && (
+          <View style={styles.contributionsBlock}>
+            <Text style={styles.hint}>
+              Pick the currency you'll be spending in day-to-day — this unlocks a running
+              "how much foreign cash do I have left" wallet, separate from your expense total.
+            </Text>
+            <Text style={[styles.label, { marginTop: theme.space.md }]}>Foreign currency</Text>
+            <View style={styles.currencyRow}>
+              {COMMON_CURRENCIES.filter((c) => c !== baseCurrency).concat(['SAR', 'JPY']).filter((v, i, a) => a.indexOf(v) === i).map((c) => (
+                <Chip key={c} label={c} active={foreignCurrency === c} onPress={() => setForeignCurrency(c)} />
+              ))}
+            </View>
+
+            <Text style={[styles.label, { marginTop: theme.space.lg }]}>Currency exchange (optional)</Text>
+            <Text style={styles.hint}>Log any conversions you've already made — you can add more anytime from the trip.</Text>
+            <View style={styles.exchangeRow}>
+              <TextInput
+                style={[styles.contributionInput, { flex: 1 }]}
+                placeholder={`${baseCurrency} given`}
+                placeholderTextColor={theme.inkMute}
+                keyboardType="numeric"
+                value={exFrom}
+                onChangeText={setExFrom}
+              />
+              <Feather name="arrow-right" size={16} color={theme.inkMute} style={{ marginHorizontal: 8 }} />
+              <TextInput
+                style={[styles.contributionInput, { flex: 1 }]}
+                placeholder={`${foreignCurrency || 'FX'} received`}
+                placeholderTextColor={theme.inkMute}
+                keyboardType="numeric"
+                value={exTo}
+                onChangeText={setExTo}
+              />
+              <TouchableOpacity
+                style={styles.addBtn}
+                onPress={() => {
+                  if (!parseFloat(exFrom) || !parseFloat(exTo)) return;
+                  setExchangeRows((prev) => [...prev, { fromAmount: exFrom, toAmount: exTo }]);
+                  setExFrom(''); setExTo('');
+                }}
+              >
+                <Feather name="plus" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {exchangeRows.map((r, i) => (
+              <View key={i} style={styles.exchangeChip}>
+                <Text style={styles.exchangeChipText}>{baseCurrency}{r.fromAmount} → {foreignCurrency}{r.toAmount}</Text>
+                <TouchableOpacity onPress={() => setExchangeRows((prev) => prev.filter((_, j) => j !== i))}>
+                  <Feather name="x" size={16} color={theme.inkMute} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            {totalExchanged > 0 && (
+              <View style={styles.totalContribRow}>
+                <Text style={styles.totalContribLabel}>Total converted</Text>
+                <Text style={styles.totalContribValue}>{foreignCurrency} {totalExchanged.toLocaleString()}</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         <Text style={[styles.label, { marginTop: theme.space.xl }]}>Add Travelers</Text>
         <View style={styles.travelerRow}>
@@ -166,15 +275,24 @@ export default function CreateTripScreen({ navigation }) {
                   <View key={t} style={styles.contributionRow}>
                     <Text style={styles.contributionName}>{t}</Text>
                     <TextInput
-                      style={styles.contributionInput}
+                      style={[styles.contributionInput, contributionErrors[t] && styles.inputError]}
                       placeholder="0"
                       placeholderTextColor={theme.inkMute}
                       keyboardType="numeric"
                       value={contributionAmounts[t] || ''}
-                      onChangeText={(v) => setContributionAmounts((prev) => ({ ...prev, [t]: v }))}
+                      onChangeText={(v) => {
+                        setContributionAmounts((prev) => ({ ...prev, [t]: v }));
+                        if (contributionErrors[t]) setContributionErrors((prev) => ({ ...prev, [t]: false }));
+                      }}
                     />
                   </View>
                 ))}
+                {totalContributions > 0 && (
+                  <View style={styles.totalContribRow}>
+                    <Text style={styles.totalContribLabel}>Total contributions</Text>
+                    <Text style={styles.totalContribValue}>{baseCurrency} {totalContributions.toLocaleString()}</Text>
+                  </View>
+                )}
               </View>
             ) : (
               <Text style={styles.hint}>Add travelers above to set their initial contributions here.</Text>
@@ -202,6 +320,11 @@ const makeStyles = (theme) => StyleSheet.create({
   body: { flex: 1, paddingHorizontal: 20 },
   label: { fontSize: 13, fontWeight: theme.weight.semibold, color: theme.inkMute, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 },
   nameInput: { backgroundColor: theme.surface, borderRadius: theme.radius.md, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17, fontWeight: theme.weight.semibold, color: theme.ink, borderWidth: 1, borderColor: theme.line },
+  inputError: { borderColor: theme.danger },
+  errorText: { color: theme.danger, fontSize: theme.type.caption, fontWeight: theme.weight.semibold, marginTop: 6 },
+  totalContribRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: theme.space.md, paddingTop: theme.space.sm, borderTopWidth: 1, borderTopColor: theme.line },
+  totalContribLabel: { fontSize: theme.type.body, color: theme.inkMute },
+  totalContribValue: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   currencyRow: { flexDirection: 'row', flexWrap: 'wrap' },
   travelerRow: { flexDirection: 'row', gap: 8 },
   travelerInput: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.sm, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: theme.line, color: theme.ink },
@@ -219,5 +342,8 @@ const makeStyles = (theme) => StyleSheet.create({
   contributionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.line },
   contributionName: { fontSize: 15, color: theme.ink, fontWeight: theme.weight.medium },
   contributionInput: { width: 90, backgroundColor: theme.surface, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 10, paddingVertical: 8, textAlign: 'right', color: theme.ink },
+  exchangeRow: { flexDirection: 'row', alignItems: 'center', marginTop: theme.space.sm },
+  exchangeChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: theme.surface, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 12, paddingVertical: 8, marginTop: theme.space.xs },
+  exchangeChipText: { color: theme.ink, fontSize: theme.type.caption },
   footer: { padding: 20 },
 });

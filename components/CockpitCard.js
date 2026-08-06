@@ -103,7 +103,7 @@ export default function CockpitCard({ tripId, today, cashLeft, tripStatus = 'act
       ) : (
         <TouchableOpacity style={[styles.collapsedBar, { marginBottom: theme.space.lg }]} onPress={() => setCollapsed(false)}>
           <IconBadge type="check" size={22} />
-          <Text style={styles.collapsedText}>{ctx.label}: {heroValue} · tap for today</Text>
+          <Text style={styles.collapsedText}>{ctx.label}: {heroValue} · tap for breakdown</Text>
         </TouchableOpacity>
       )}
 

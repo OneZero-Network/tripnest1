@@ -94,6 +94,16 @@ export async function computeBankSettlement(tripId) {
   if (travelers.length === 0) return { balances: {}, transactions: [], sharedSpendByPerson: {} };
 
   const travelerNames = new Set(travelers.map((t) => t.name));
+  // A solo trip has nobody to settle with — the one traveler IS the Trip Bank, so a
+  // mismatch between what they contributed and what they spent isn't really a debt,
+  // it's just their own money moving between two pockets. Without this, a solo trip
+  // could show a permanent "owes ₹X" that no one could ever actually pay off to
+  // anyone, which is exactly the "trip never finishes" bug this guards against.
+  if (travelers.length <= 1) {
+    const balances = {};
+    travelers.forEach((t) => (balances[t.name] = 0));
+    return { balances, transactions: [], sharedSpendByPerson: {} };
+  }
   const { owedByPerson } = await computeExpenseShares(db, bankExpenses, travelerNames);
 
   const contributedByPerson = {};
@@ -186,6 +196,13 @@ export async function computeSettlement(tripId) {
   if (travelers.length === 0) return { balances: {}, transactions: [], settledTransactions: settlementRows, orphanedPayers: [] };
 
   const travelerNames = new Set(travelers.map((t) => t.name));
+  // Same reasoning as computeBankSettlement: one traveler has no one to owe or be owed
+  // by, so personal-expense settlement is a no-op for a solo trip.
+  if (travelers.length <= 1) {
+    const balances = {};
+    travelers.forEach((t) => (balances[t.name] = 0));
+    return { balances, transactions: [], settledTransactions: settlementRows, orphanedPayers: [] };
+  }
   const { paidByPerson, owedByPerson, orphanedPayers } = await computeExpenseShares(db, expenses, travelerNames);
 
   const balances = {};
@@ -248,11 +265,38 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   const perPerson = trip?.contribution_per_person ?? null;
   const fundTarget = perPerson != null ? perPerson * travelerCount : null;
 
+  // Foreign wallets: one per currency actually converted into on this trip — not just
+  // the trip's single default `foreign_currency`. A Europe-then-UK trip converts into
+  // both EUR and GBP; each needs its own "how much is left" number, so this is computed
+  // from every distinct to_currency seen in currency_exchanges, not a fixed column.
+  let foreignWallets = [];
+  if (trip?.trip_type === 'international') {
+    const currencies = await db.getAllAsync('SELECT DISTINCT to_currency FROM currency_exchanges WHERE trip_id = ?', tripId);
+    for (const row of currencies) {
+      const c = row.to_currency;
+      const exchanged = await db.getFirstAsync('SELECT COALESCE(SUM(to_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND to_currency = ?', tripId, c);
+      const fxSpent = await db.getFirstAsync('SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ? AND currency = ?', tripId, c);
+      const convertedByPerson = await db.getAllAsync('SELECT converted_by, COALESCE(SUM(to_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND to_currency = ? AND converted_by IS NOT NULL GROUP BY converted_by', tripId, c);
+      const spentByPerson = await db.getAllAsync('SELECT paid_by, COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ? AND currency = ? GROUP BY paid_by', tripId, c);
+      const spentMap = {};
+      spentByPerson.forEach((r) => { spentMap[r.paid_by] = r.total; });
+      const byPerson = convertedByPerson.map((r) => ({ converted_by: r.converted_by, total: r.total, spent: spentMap[r.converted_by] || 0, remaining: r.total - (spentMap[r.converted_by] || 0) }));
+      foreignWallets.push({ currency: c, exchanged: exchanged.total, spent: fxSpent.total, remaining: exchanged.total - fxSpent.total, byPerson });
+    }
+  }
+  // Kept for anything still reading the singular field — the trip's default currency's
+  // wallet, or null if nothing's been converted into it yet.
+  const foreignWallet = foreignWallets.find((w) => w.currency === trip?.foreign_currency) || null;
+
   return {
     tripStatus: trip?.status || 'active',
     custodian: trip?.custodian || null,
     hasTripBank: trip?.has_trip_bank !== 0,
     baseCurrency: trip?.base_currency || 'INR',
+    tripType: trip?.trip_type || 'domestic',
+    foreignCurrency: trip?.foreign_currency || null,
+    foreignWallet,
+    foreignWallets,
     contributions: contribRows,
     totalReceived,
     totalSpent,

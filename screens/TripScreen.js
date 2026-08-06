@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager, TextInput } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDB, computeTripData, getDrafts } from '../db';
+import { getDB, computeTripData, getDrafts, renameTrip } from '../db';
 import CockpitCard from '../components/CockpitCard';
 import TravelersTab from '../components/TravelersTab';
 import TimelineTab from '../components/TimelineTab';
@@ -16,7 +16,7 @@ import ExpensesTab from '../components/ExpensesTab';
 import UniversalCapture from '../components/UniversalCapture';
 import ActivityItemSheet from '../components/ActivityItemSheet';
 import SafeModeCard from '../components/SafeModeCard';
-import { ErrorState, Container, useTheme } from '../components/UI';
+import { ErrorState, Container, BottomSheet, PrimaryButton, useTheme } from '../components/UI';
 
 // Five areas, each answering exactly one question — per the "think in questions, not
 // screens" review: Overview ("how's the trip going"), Members ("how's each traveler
@@ -31,7 +31,7 @@ const TABS = [
   { key: 'Activity', icon: 'activity' },
   { key: 'Settle', icon: 'check-circle' },
 ];
-const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, hasTripBank: true, baseCurrency: 'INR', liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [], sharedSpendByPerson: {} }, finalBankSettlement: null, tripStatus: 'active' };
+const EMPTY_FINANCE = { contributions: [], totalReceived: 0, totalSpent: 0, bankSpent: 0, personalSpent: 0, currentCash: 0, perPerson: null, fundTarget: null, travelerCount: 0, custodian: null, hasTripBank: true, baseCurrency: 'INR', tripType: 'domestic', foreignCurrency: null, foreignWallet: null, liveForecast: { balances: {}, transactions: [] }, finalSettlement: null, bankSettlement: { balances: {}, transactions: [], sharedSpendByPerson: {} }, finalBankSettlement: null, tripStatus: 'active' };
 
 // TripScreen is an orchestrator: it owns the trip-wide data fetch and tab selection,
 // then hands each tab its slice of data plus a single onChanged() refresh callback.
@@ -41,6 +41,9 @@ export default function TripScreen({ route, navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { tripId, tripName, openSafeMode } = route.params;
+  const [currentTripName, setCurrentTripName] = useState(tripName);
+  const [renamingTrip, setRenamingTrip] = useState(false);
+  const [tripNameDraft, setTripNameDraft] = useState(tripName);
   const [tab, setTab] = useState('Overview');
 
   // A subtle cross-fade/resize when switching tabs — cheap (one built-in RN API call,
@@ -133,6 +136,16 @@ export default function TripScreen({ route, navigation }) {
 
   useFocusEffect(useCallback(() => { loadAll(); }, [tripId]));
 
+  const saveTripName = async () => {
+    const trimmed = tripNameDraft.trim();
+    if (!trimmed || trimmed === currentTripName) { setRenamingTrip(false); return; }
+    await renameTrip(tripId, trimmed);
+    setCurrentTripName(trimmed);
+    navigation.setParams({ tripName: trimmed });
+    setRenamingTrip(false);
+    loadAll();
+  };
+
   // Handles the case where the app is already open on this trip and the shortcut fires
   // again — navigate() updates route.params without remounting, so the initial useState
   // above wouldn't catch it on its own.
@@ -153,7 +166,15 @@ export default function TripScreen({ route, navigation }) {
           >
             <Feather name="arrow-left" size={22} color={theme.ink} />
           </TouchableOpacity>
-          <Text style={styles.title} numberOfLines={1}>{tripName}</Text>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            onPress={() => { setTripNameDraft(currentTripName); setRenamingTrip(true); }}
+            hitSlop={{ top: 8, bottom: 8 }}
+            accessibilityLabel="Rename trip"
+            accessibilityRole="button"
+          >
+            <Text style={styles.title} numberOfLines={1}>{currentTripName}</Text>
+          </TouchableOpacity>
           <View style={styles.headerActions}>
             {timeline.length >= 10 && (
               <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search', { tripId })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Search this trip" accessibilityRole="button">
@@ -163,7 +184,7 @@ export default function TripScreen({ route, navigation }) {
             <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Drafts', { tripId })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Drafts" accessibilityRole="button">
               <Feather name="inbox" size={18} color={theme.inkSoft} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Share', { tripId, tripName })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Share trip" accessibilityRole="button">
+            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Share', { tripId, tripName: currentTripName })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Share trip" accessibilityRole="button">
               <Feather name="share-2" size={18} color={theme.inkSoft} />
             </TouchableOpacity>
             {/* Safe Mode is the one icon that keeps color — it's the one place color is
@@ -223,7 +244,7 @@ export default function TripScreen({ route, navigation }) {
                 {tab === 'Members' && <TravelersTab tripId={tripId} travelers={travelers} expenses={expenses} finance={finance} onChanged={loadAll} />}
                 {tab === 'Expenses' && <ExpensesTab expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Activity' && <TimelineTab timeline={timeline} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
-                {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} expenses={expenses} tripName={tripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} onOpenExpenses={() => changeTab('Expenses')} />}
+                {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} expenses={expenses} tripName={currentTripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} onOpenExpenses={() => changeTab('Expenses')} />}
                 {tab === 'Settle' && <SettlementTab tripId={tripId} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
               </>
             )}
@@ -231,9 +252,9 @@ export default function TripScreen({ route, navigation }) {
         </ScrollView>
         </View>
 
-        <UniversalCapture tripId={tripId} navigation={navigation} travelers={travelers} baseCurrency={finance.baseCurrency} hasTripBank={finance.hasTripBank} onChanged={loadAll} />
+        <UniversalCapture tripId={tripId} navigation={navigation} travelers={travelers} baseCurrency={finance.baseCurrency} hasTripBank={finance.hasTripBank} tripType={finance.tripType} foreignCurrency={finance.foreignCurrency} onChanged={loadAll} />
       </View>
-      {safeMode && <SafeModeCard tripId={tripId} tripName={tripName} onClose={() => setSafeMode(false)} />}
+      {safeMode && <SafeModeCard tripId={tripId} tripName={currentTripName} onClose={() => setSafeMode(false)} />}
       {showAdvanced && (
         <View style={styles.advancedOverlay}>
           <View style={styles.advancedHeaderRow}>
@@ -252,14 +273,31 @@ export default function TripScreen({ route, navigation }) {
         tripId={tripId}
         event={selectedActivityEvent}
         baseCurrency={finance.baseCurrency}
+        travelers={travelers}
+        hasTripBank={finance.hasTripBank}
         onClose={() => setSelectedActivityEvent(null)}
         onChanged={loadAll}
       />
+
+      <BottomSheet visible={renamingTrip} onClose={() => setRenamingTrip(false)}>
+        <Text style={styles.renameTitle}>Rename trip</Text>
+        <TextInput
+          style={styles.renameInput}
+          value={tripNameDraft}
+          onChangeText={setTripNameDraft}
+          autoFocus
+          placeholder="Trip name"
+          placeholderTextColor={theme.inkMute}
+        />
+        <PrimaryButton label="Save" onPress={saveTripName} style={{ marginTop: theme.space.sm }} />
+      </BottomSheet>
     </SafeAreaView>
   );
 }
 
 const makeStyles = (theme) => StyleSheet.create({
+  renameTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.sm },
+  renameInput: { backgroundColor: theme.bg, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 14, minHeight: theme.a11y.minTouchTarget, color: theme.ink, fontSize: 16 },
   advancedOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.bg, zIndex: 40, paddingTop: 56 },
   advancedHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space.lg, marginBottom: theme.space.md },
   advancedTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink },

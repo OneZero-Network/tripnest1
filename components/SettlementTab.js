@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { recordSettlement } from '../db';
+import { recordSettlement, recordBankSettlementLeg } from '../db';
 import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, SuccessToast, currencySymbol, useTheme } from './UI';
 
 // SIMPLIFIED SETTLEMENT: the founder's own words — "Users shouldn't learn accounting to
@@ -41,13 +41,15 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 
   const settleOne = async (t) => {
     // A refund FROM the Trip Bank, or a top-up TO the Trip Bank, isn't a traveler-to-
-    // traveler settlement the recordSettlement ledger tracks today (that table assumes
-    // two named travelers) — recording it as a contribution/withdrawal is a future
-    // refinement; for now marking it here just removes it from view for this session
-    // rather than writing a record. Peer-to-peer ("who needs to pay") settlements between
-    // two real travelers DO record properly, same as before.
-    if (t.from !== 'Trip Bank' && t.to !== 'Trip Bank') {
+    // Bank legs (top-up or refund) are now recorded as real contribution rows via
+    // recordBankSettlementLeg, so this fixes the "still says pending after everyone's
+    // paid" bug — the bank balance actually nets to zero afterward instead of being
+    // recomputed identically on the next load. Peer-to-peer legs keep using
+    // recordSettlement, unchanged.
+    if (t.from !== bankName && t.to !== bankName) {
       await recordSettlement(tripId, t.from, t.to, t.amount);
+    } else {
+      await recordBankSettlementLeg(tripId, t.from, t.to, t.amount, bankName);
     }
   };
 
@@ -90,6 +92,13 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
         value={`${cs}${finance.currentCash}`}
       />
 
+      {finance.travelerCount === 1 ? (
+        <Card style={{ padding: theme.space.lg, marginTop: theme.space.lg }}>
+          <Text style={styles.heading}>✅ No settlement required</Text>
+          <Text style={styles.muted}>It's just you on this trip — there's no one to split costs with.</Text>
+        </Card>
+      ) : (
+      <>
       {finance.liveForecast?.orphanedPayers?.length > 0 && (
         <View style={styles.warningBanner}>
           <Feather name="alert-triangle" size={14} color={theme.warn} />
@@ -107,7 +116,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
           <LedgerList>
             {toRefund.map((t, i) => (
               <LedgerRow key={i} icon="refund" isLast={i === toRefund.length - 1}>
-                <Text style={styles.line}>Trip Bank → {t.to}</Text>
+                <Text style={styles.line}>Refund to {t.to}</Text>
                 <Text style={styles.amount}>{cs}{t.amount}</Text>
               </LedgerRow>
             ))}
@@ -130,7 +139,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
                 actionLabel="Mark paid"
                 onAction={() => setPendingSettle(t)}
               >
-                <Text style={styles.line}>{t.from} → {t.to}</Text>
+                <Text style={styles.line}>{t.to === bankName ? `${t.from} tops up pool` : `${t.from} → ${t.to}`}</Text>
                 <Text style={styles.amount}>{cs}{t.amount}</Text>
               </LedgerRow>
             ))}
@@ -154,6 +163,8 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
       {onOpenAdvanced && (
         <Text style={styles.advancedLink} onPress={onOpenAdvanced}>View detailed breakdown →</Text>
       )}
+      </>
+      )}
 
       <ConfirmDialog
         visible={!!pendingSettle}
@@ -176,7 +187,10 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1 },
+  // Extra bottom padding: the FAB is a fixed, absolutely-positioned element outside this
+  // scroll content, so without room reserved for it here, "Mark all as settled" — the one
+  // button on this screen you really don't want a mis-tap on — sits directly under it.
+  section: { flex: 1, paddingBottom: 88 },
   heading: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.sm },
   pageHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.space.sm },
   pageTitle: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },

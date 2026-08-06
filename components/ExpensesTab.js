@@ -43,7 +43,7 @@ export default function ExpensesTab({ expenses, baseCurrency, onOpenItem }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowTitle}>{item.category || 'Expense'}</Text>
                   <Text style={styles.rowSub}>
-                    Paid by {item.paid_by}{item.description ? ` · ${item.description}` : ''}
+                    Paid by {item.paid_by}{item.description ? ` · ${item.description}` : ''} · {item.funding_source === 'bank' ? 'Trip Bank' : 'Personal'}
                   </Text>
                 </View>
                 <Text style={styles.rowAmount}>{cs}{item.amount}{item.currency !== baseCurrency ? ` ${item.currency}` : ''}</Text>
@@ -57,7 +57,7 @@ export default function ExpensesTab({ expenses, baseCurrency, onOpenItem }) {
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1 },
+  section: { flex: 1, paddingBottom: 88 }, // clears the floating action button, same fix as SettlementTab
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: theme.space.md },
   totalLabel: { fontSize: theme.type.body, color: theme.inkMute },
   totalValue: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink },

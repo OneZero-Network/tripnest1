@@ -161,7 +161,7 @@ export function Card({ children, style }) {
 // "icon consistency" gap flagged in the engineering/UX review.
 const ICON_MAP = {
   expense: 'dollar-sign', note: 'file-text', document: 'paperclip', itinerary: 'calendar',
-  traveler: 'user', trip: 'flag', contribution: 'gift', draft: 'inbox',
+  traveler: 'user', trip: 'flag', contribution: 'gift', draft: 'inbox', exchange: 'repeat',
   search: 'search', share: 'share-2', plan: 'map-pin', check: 'check', add: 'plus',
   settlement: 'check-circle', refund: 'arrow-down-circle', payOut: 'repeat',
 };

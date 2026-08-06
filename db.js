@@ -119,6 +119,108 @@ const MIGRATIONS = [
       share_amount REAL NOT NULL
     );`,
   },
+  {
+    name: '019_add_expense_edited_at',
+    // NULL means "never edited" — the common case, and exactly what every pre-existing
+    // expense actually is. Distinguishing this from "edited at creation time" matters for
+    // the detail sheet: it's the difference between showing an "Edited" badge or not.
+    sql: `ALTER TABLE expenses ADD COLUMN edited_at INTEGER;`,
+  },
+  {
+    name: '020_add_expense_history',
+    // The "immutable vs. editable" tension resolved: expenses ARE now editable, but every
+    // edit first snapshots the pre-edit row here before the UPDATE touches it, and delete
+    // snapshots the row here too (as a tombstone) before the DELETE. Nothing is silently
+    // overwritten or silently gone — there's always a prior version on record, and the
+    // Activity timeline (via a paired timeline event, not this table) is what a user
+    // actually sees; this table is the underlying proof it's not just a claim.
+    sql: `CREATE TABLE IF NOT EXISTS expense_history (
+      id TEXT PRIMARY KEY,
+      expense_id TEXT NOT NULL,
+      trip_id TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      action TEXT NOT NULL,
+      changed_at INTEGER NOT NULL
+    );`,
+  },
+  {
+    name: '021_add_contribution_edited_at',
+    sql: `ALTER TABLE contributions ADD COLUMN edited_at INTEGER;`,
+  },
+  {
+    name: '022_add_contribution_history',
+    // Same reasoning as expense_history, scoped to contributions — a top-up entered wrong
+    // needs the same "edit preserves the prior version, doesn't just silently change the
+    // number a settlement is based on" treatment.
+    sql: `CREATE TABLE IF NOT EXISTS contribution_history (
+      id TEXT PRIMARY KEY,
+      contribution_id TEXT NOT NULL,
+      trip_id TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      action TEXT NOT NULL,
+      changed_at INTEGER NOT NULL
+    );`,
+  },
+  {
+    name: '023_add_trip_type',
+    // 'domestic' (default — every existing trip stays exactly as-is) or 'international'.
+    // International unlocks the currency-exchange wallet: a solo/group trip abroad often
+    // converts a chunk of money once (INR → SAR) and then spends DOWN a foreign-currency
+    // cash pocket over many small purchases — a fundamentally different shape than "log
+    // each expense in its own currency with its own rate," which is what the app already
+    // did and which works fine for occasional foreign purchases but not for "I am now
+    // carrying 1,265 SAR and want to see what's left of it."
+    sql: `ALTER TABLE trips ADD COLUMN trip_type TEXT NOT NULL DEFAULT 'domestic';`,
+  },
+  {
+    name: '024_add_trip_foreign_currency',
+    sql: `ALTER TABLE trips ADD COLUMN foreign_currency TEXT;`,
+  },
+  {
+    name: '025_add_currency_exchanges',
+    // Each row is one real-world conversion event: handed over `from_amount` of
+    // `from_currency` (almost always the base currency), received `to_amount` of
+    // `to_currency` (the foreign currency) at that moment's rate. This is deliberately
+    // NOT an expense — converting money isn't spending it, and counting it as spend would
+    // inflate "total spent" by money that's sitting in your pocket, not gone. The foreign
+    // wallet balance is derived at read time: sum(to_amount here) minus sum(amount of
+    // every expense recorded in that foreign currency) — never stored, so it's always
+    // consistent with whatever expenses actually exist.
+    sql: `CREATE TABLE IF NOT EXISTS currency_exchanges (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      from_amount REAL NOT NULL,
+      from_currency TEXT NOT NULL,
+      to_amount REAL NOT NULL,
+      to_currency TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );`,
+  },
+  {
+    name: '026_add_exchange_edited_at',
+    sql: `ALTER TABLE currency_exchanges ADD COLUMN edited_at INTEGER;`,
+  },
+  {
+    name: '027_add_exchange_history',
+    // Same snapshot-before-write discipline as expense_history/contribution_history.
+    sql: `CREATE TABLE IF NOT EXISTS exchange_history (
+      id TEXT PRIMARY KEY,
+      exchange_id TEXT NOT NULL,
+      trip_id TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      action TEXT NOT NULL,
+      changed_at INTEGER NOT NULL
+    );`,
+  },
+  {
+    name: '028_add_exchange_converted_by',
+    // NULL for solo trips (no need to attribute conversions to a specific person) or
+    // trips created before this migration. For a group international trip, this is what
+    // lets the foreign wallet be split per-traveler instead of one undifferentiated pool —
+    // "Adnan converted ₹15,000, Tariq converted ₹8,000" instead of one shared number
+    // nobody can attribute.
+    sql: `ALTER TABLE currency_exchanges ADD COLUMN converted_by TEXT;`,
+  },
 ];
 
 export async function getDB() {
@@ -276,7 +378,145 @@ export async function setAppMeta(key, value) {
 
 export async function setBaseCurrency(tripId, currency) {
   const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT base_currency, name FROM trips WHERE id = ?', tripId);
   await db.runAsync('UPDATE trips SET base_currency = ? WHERE id = ?', currency, tripId);
+  if (trip && trip.base_currency !== currency) {
+    await logTimelineEvent({ tripId, type: 'trip', title: `Trip currency changed: ${trip.base_currency} → ${currency}`, timestamp: Date.now(), idSuffix: '_cur' });
+  }
+}
+
+// ---- International trips: trip type + foreign-currency wallet ----
+export async function setTripType(tripId, tripType, foreignCurrency = null) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT trip_type FROM trips WHERE id = ?', tripId);
+  await db.runAsync('UPDATE trips SET trip_type = ?, foreign_currency = ? WHERE id = ?', tripType, tripType === 'international' ? foreignCurrency : null, tripId);
+  if (trip && trip.trip_type !== tripType) {
+    await logTimelineEvent({ tripId, type: 'trip', title: `Trip type changed: ${trip.trip_type} → ${tripType}`, timestamp: Date.now(), idSuffix: '_type' });
+  }
+}
+
+// One row per real conversion event (INR → SAR, say). Deliberately separate from
+// expenses — see migration 025's comment for why counting this as spend would be wrong.
+export async function addCurrencyExchange(tripId, fromAmount, fromCurrency, toAmount, toCurrency, convertedBy = null) {
+  const db = await getDB();
+  const id = String(Date.now()) + Math.random().toString(36).slice(2);
+  const ts = Date.now();
+  await db.runAsync(
+    'INSERT INTO currency_exchanges (id, trip_id, from_amount, from_currency, to_amount, to_currency, converted_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, fromAmount, fromCurrency, toAmount, toCurrency, convertedBy, ts
+  );
+  const who = convertedBy ? `${convertedBy} exchanged` : 'Exchanged';
+  await logTimelineEvent({ tripId, type: 'exchange', title: `${who} ${fromAmount} ${fromCurrency} → ${toAmount} ${toCurrency}`, timestamp: ts, idSuffix: '_t', metadata: { id, fromAmount, fromCurrency, toAmount, toCurrency, convertedBy } });
+  return id;
+}
+
+// The most recent conversion rate for a given foreign currency on this trip — used to
+// pre-fill an expense's FX rate so it doesn't have to be manually re-typed every time,
+// while staying editable in case the actual rate moved since that conversion.
+export async function getLatestExchangeRate(tripId, currency) {
+  const db = await getDB();
+  const row = await db.getFirstAsync(
+    'SELECT from_amount, to_amount FROM currency_exchanges WHERE trip_id = ? AND to_currency = ? ORDER BY created_at DESC LIMIT 1',
+    tripId, currency
+  );
+  if (!row || !row.to_amount) return null;
+  return +(row.from_amount / row.to_amount).toFixed(4);
+}
+
+export async function getCurrencyExchanges(tripId) {
+  const db = await getDB();
+  return db.getAllAsync('SELECT * FROM currency_exchanges WHERE trip_id = ? ORDER BY created_at DESC', tripId);
+}
+
+export async function getCurrencyExchangeById(id) {
+  const db = await getDB();
+  return db.getFirstAsync('SELECT * FROM currency_exchanges WHERE id = ?', id);
+}
+
+// Same snapshot-then-update discipline as expenses/contributions — a wrong conversion
+// entered by mistake gets a fix path now, not just a "live with it or re-enter everything."
+export async function updateCurrencyExchange(tripId, exchangeId, fromAmount, toAmount) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM currency_exchanges WHERE id = ?', exchangeId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO exchange_history (id, exchange_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, exchangeId, tripId, JSON.stringify(existing), 'edit', Date.now()
+  );
+  const ts = Date.now();
+  await db.runAsync('UPDATE currency_exchanges SET from_amount = ?, to_amount = ?, edited_at = ? WHERE id = ?', fromAmount, toAmount, ts, exchangeId);
+  await logTimelineEvent({ tripId, type: 'exchange', title: `Exchange edited: ${existing.from_amount} ${existing.from_currency} → ${existing.to_amount} ${existing.to_currency} became ${fromAmount} ${existing.from_currency} → ${toAmount} ${existing.to_currency}`, timestamp: ts, idSuffix: '_ee', metadata: { id: exchangeId, edited: true, field: 'exchange', oldValue: `${existing.to_amount} ${existing.to_currency}`, newValue: `${toAmount} ${existing.to_currency}` } });
+  return { ok: true };
+}
+
+export async function deleteCurrencyExchange(tripId, exchangeId) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM currency_exchanges WHERE id = ?', exchangeId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO exchange_history (id, exchange_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, exchangeId, tripId, JSON.stringify(existing), 'delete', Date.now()
+  );
+  await db.runAsync('DELETE FROM currency_exchanges WHERE id = ?', exchangeId);
+  await logTimelineEvent({ tripId, type: 'exchange', title: `Removed exchange: ${existing.from_amount} ${existing.from_currency} → ${existing.to_amount} ${existing.to_currency}`, timestamp: Date.now(), idSuffix: '_edel' });
+  return { ok: true };
+}
+
+// Every distinct currency actually converted into on this trip — the multi-currency
+// case (Europe leg in EUR, UK leg in GBP) needs one wallet per currency, not one fixed
+// to trips.foreign_currency, which is now just the *default* the Add sheet pre-selects.
+export async function getForeignWalletBalances(tripId) {
+  const db = await getDB();
+  const currencies = await db.getAllAsync('SELECT DISTINCT to_currency FROM currency_exchanges WHERE trip_id = ?', tripId);
+  const wallets = [];
+  for (const row of currencies) {
+    const c = row.to_currency;
+    const exchanged = await db.getFirstAsync('SELECT COALESCE(SUM(to_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND to_currency = ?', tripId, c);
+    const spent = await db.getFirstAsync('SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ? AND currency = ?', tripId, c);
+    // Per-person REMAINING, not just how much each person converted — this was the gap
+    // flagged last round as needing new schema, but it doesn't: expenses.paid_by already
+    // tells us who spent from a given currency, so "Adnan converted X, Adnan's expenses
+    // in that currency sum to Y, Adnan has X-Y left" falls straight out of existing data.
+    const convertedByPerson = await db.getAllAsync('SELECT converted_by, COALESCE(SUM(to_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND to_currency = ? AND converted_by IS NOT NULL GROUP BY converted_by', tripId, c);
+    const spentByPerson = await db.getAllAsync('SELECT paid_by, COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ? AND currency = ? GROUP BY paid_by', tripId, c);
+    const spentMap = {};
+    spentByPerson.forEach((r) => { spentMap[r.paid_by] = r.total; });
+    const byPerson = convertedByPerson.map((r) => ({ converted_by: r.converted_by, total: r.total, spent: spentMap[r.converted_by] || 0, remaining: r.total - (spentMap[r.converted_by] || 0) }));
+    wallets.push({ currency: c, exchanged: exchanged.total, spent: spent.total, remaining: exchanged.total - spent.total, byPerson });
+  }
+  return wallets;
+}
+
+// Foreign wallet balance = every SAR (or whatever) you've converted into, minus every
+// expense you've logged in that same foreign currency — i.e. what's still in your pocket.
+// Deliberately recomputed from source rows every time rather than stored, so it can never
+// drift out of sync with the actual exchange/expense history.
+export async function getForeignWalletBalance(tripId) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT foreign_currency FROM trips WHERE id = ?', tripId);
+  if (!trip?.foreign_currency) return null;
+  const exchanged = await db.getFirstAsync(
+    'SELECT COALESCE(SUM(to_amount), 0) as total FROM currency_exchanges WHERE trip_id = ? AND to_currency = ?',
+    tripId, trip.foreign_currency
+  );
+  const spent = await db.getFirstAsync(
+    'SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE trip_id = ? AND currency = ?',
+    tripId, trip.foreign_currency
+  );
+  return { currency: trip.foreign_currency, exchanged: exchanged.total, spent: spent.total, remaining: exchanged.total - spent.total };
+}
+
+// Trip name is editable post-creation — same audit-trail treatment as everything else
+// in this pass: the change itself is logged, not hidden as a silent field update.
+export async function renameTrip(tripId, newName) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT name FROM trips WHERE id = ?', tripId);
+  if (!newName.trim() || !trip) return { ok: false };
+  await db.runAsync('UPDATE trips SET name = ? WHERE id = ?', newName.trim(), tripId);
+  await logTimelineEvent({ tripId, type: 'trip', title: `Trip renamed: ${trip.name} → ${newName.trim()}`, timestamp: Date.now(), idSuffix: '_rn' });
+  return { ok: true };
 }
 
 export async function addExpense(tripId, paidBy, amount, description, opts = {}) {
@@ -320,8 +560,91 @@ export async function addExpense(tripId, paidBy, amount, description, opts = {})
   // gets written back into the stored `description`, which is what caused the
   // "Food · Food · Personal" duplicate in the row list.
   const timelineNoun = description || category || 'an expense';
-  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${timelineNoun}${sourceLabel}`, timestamp: ts, idSuffix: '_t', metadata: { id, paidBy, amount, currency, category } });
+  await logTimelineEvent({ tripId, type: 'expense', title: `${paidBy} paid ${label} for ${timelineNoun}${sourceLabel}`, timestamp: ts, idSuffix: '_t', metadata: { id, paidBy, amount, currency, category, fundingSource } });
   return id;
+}
+
+// ---- Expense editing: snapshot-then-update, never a silent overwrite ----
+// Resolves the "immutable vs. editable" conflict directly: the row IS updated (so the
+// UI, exports, and every downstream read see the new value), but the pre-edit row is
+// preserved first in expense_history, and every changed field gets its own timeline
+// event carrying old→new — so "was this edited, by what, from what" is always
+// answerable from the Activity feed without needing to open expense_history directly.
+export async function updateExpense(tripId, expenseId, changes) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', expenseId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO expense_history (id, expense_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, expenseId, tripId, JSON.stringify(existing), 'edit', Date.now()
+  );
+
+  const next = {
+    paid_by: changes.paidBy ?? existing.paid_by,
+    amount: changes.amount ?? existing.amount,
+    description: changes.description !== undefined ? changes.description : existing.description,
+    category: changes.category !== undefined ? changes.category : existing.category,
+    funding_source: changes.fundingSource ?? existing.funding_source,
+    currency: changes.currency ?? existing.currency,
+    fx_rate: changes.fxRate ?? existing.fx_rate,
+  };
+  const ts = Date.now();
+  await db.runAsync(
+    'UPDATE expenses SET paid_by = ?, amount = ?, description = ?, category = ?, funding_source = ?, currency = ?, fx_rate = ?, edited_at = ? WHERE id = ?',
+    next.paid_by, next.amount, next.description, next.category, next.funding_source, next.currency, next.fx_rate, ts, expenseId
+  );
+
+  // Re-derive the split from scratch rather than trying to patch individual rows —
+  // simpler and correct either way (explicit participant list, or back to "everyone").
+  if (changes.participants !== undefined) {
+    await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+    if (changes.participants && changes.participants.length > 0) {
+      const baseAmount = next.amount * next.fx_rate;
+      const perPerson = +(baseAmount / changes.participants.length).toFixed(2);
+      for (const name of changes.participants) {
+        const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
+        await db.runAsync('INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount) VALUES (?, ?, ?, ?)', splitId, expenseId, name, perPerson);
+      }
+    }
+  }
+
+  // One timeline event per meaningfully changed field — this is what the Activity feed
+  // actually renders as "Edited X: old → new", not the raw history table.
+  if (existing.amount !== next.amount) {
+    await logTimelineEvent({ tripId, type: 'expense', title: `${next.paid_by} changed ${next.category || 'an expense'}: ${existing.currency}${existing.amount} → ${next.currency}${next.amount}`, timestamp: ts, idSuffix: '_ea', metadata: { id: expenseId, edited: true, field: 'amount', oldValue: existing.amount, newValue: next.amount, category: next.category, paidBy: next.paid_by, currency: next.currency } });
+  }
+  if (existing.category !== next.category) {
+    await logTimelineEvent({ tripId, type: 'expense', title: `${next.paid_by} changed category: ${existing.category || 'Uncategorized'} → ${next.category || 'Uncategorized'}`, timestamp: ts, idSuffix: '_ec', metadata: { id: expenseId, edited: true, field: 'category', oldValue: existing.category, newValue: next.category } });
+  }
+  if (existing.paid_by !== next.paid_by) {
+    await logTimelineEvent({ tripId, type: 'expense', title: `Payer changed on ${next.category || 'an expense'}: ${existing.paid_by} → ${next.paid_by}`, timestamp: ts, idSuffix: '_ep', metadata: { id: expenseId, edited: true, field: 'paidBy', oldValue: existing.paid_by, newValue: next.paid_by } });
+  }
+  if (existing.funding_source !== next.funding_source) {
+    await logTimelineEvent({ tripId, type: 'expense', title: `${next.paid_by} changed how ${next.category || 'an expense'} was paid: ${existing.funding_source === 'bank' ? 'Trip Bank' : 'Personal'} → ${next.funding_source === 'bank' ? 'Trip Bank' : 'Personal'}`, timestamp: ts, idSuffix: '_ef', metadata: { id: expenseId, edited: true, field: 'fundingSource', oldValue: existing.funding_source, newValue: next.funding_source } });
+  }
+  return { ok: true };
+}
+
+// Delete also snapshots first — a tombstone, not a silent disappearance. The activity
+// line stays in the timeline forever ("Adnan deleted Transport ₹300"), even though the
+// expense_history row is the only place the full detail survives afterward.
+export async function deleteExpense(tripId, expenseId) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', expenseId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO expense_history (id, expense_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, expenseId, tripId, JSON.stringify(existing), 'delete', Date.now()
+  );
+  await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+  await db.runAsync('DELETE FROM expenses WHERE id = ?', expenseId);
+  const ts = Date.now();
+  const label = existing.currency === 'INR' || !existing.currency ? `${existing.amount}` : `${existing.amount} ${existing.currency}`;
+  await logTimelineEvent({ tripId, type: 'expense', title: `${existing.paid_by} deleted ${existing.category || 'an expense'}: ${label}`, timestamp: ts, idSuffix: '_del' });
+  return { ok: true };
 }
 
 // ---- Travelers: editable (not financial records) ----
@@ -392,6 +715,11 @@ export async function getExpenseById(id) {
   return db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', id);
 }
 
+export async function getContributionById(id) {
+  const db = await getDB();
+  return db.getFirstAsync('SELECT * FROM contributions WHERE id = ?', id);
+}
+
 export async function getExpenseSplits(expenseId) {
   const db = await getDB();
   return db.getAllAsync('SELECT * FROM expense_splits WHERE expense_id = ?', expenseId);
@@ -422,6 +750,31 @@ export async function getSafeModeData(tripId) {
 // "Expected" contributions are NOT modeled here: that needs a per-traveler target or split
 // rule nobody has specified yet. Building it silently would mean inventing a default the
 // organizer never asked for. This tracks money actually received, full stop.
+// ---- Recording a Trip Bank leg of a settlement (top-up or refund) as a real event ----
+// Previously "Mark paid" on a Trip Bank leg only removed it from the settlement list for
+// that render — nothing was written to the database, so the exact same balance came back
+// on the next load. That's the "3 settlements pending even after everyone paid" bug: the
+// personal (person-to-person) legs recorded fine via recordSettlement, but the bank legs
+// never did. A top-up (traveler → Trip Bank) IS a contribution; a refund (Trip Bank →
+// traveler) is the same thing with the sign flipped — both are handled as contribution
+// rows so computeBankSettlement's balance naturally nets back to zero afterward.
+export async function recordBankSettlementLeg(tripId, fromName, toName, amount, bankName = 'Trip Bank') {
+  const db = await getDB();
+  const baseCurrency = await getTripBaseCurrency(tripId);
+  const id = String(Date.now()) + Math.random().toString(36).slice(2);
+  const ts = Date.now();
+  const isTopUp = toName === bankName; // traveler → bank
+  const traveler = isTopUp ? fromName : toName; // bank → traveler is a refund
+  const signedAmount = isTopUp ? amount : -amount;
+  await db.runAsync(
+    'INSERT INTO contributions (id, trip_id, traveler, amount, currency, fx_rate, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, traveler, signedAmount, baseCurrency, 1, ts
+  );
+  const label = isTopUp ? `${traveler} topped up the Trip Bank with ${amount}` : `${traveler} was refunded ${amount} from the Trip Bank`;
+  await logTimelineEvent({ tripId, type: 'contribution', title: label, timestamp: ts, idSuffix: '_t' });
+  return id;
+}
+
 export async function addContribution(tripId, traveler, amount, opts = {}) {
   const db = await getDB();
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
@@ -435,8 +788,39 @@ export async function addContribution(tripId, traveler, amount, opts = {}) {
     id, tripId, traveler, amount, currency, fxRate, ts
   );
   const label = currency === baseCurrency ? `${amount}` : `${amount} ${currency}`;
-  await logTimelineEvent({ tripId, type: 'contribution', title: `${traveler} contributed ${label} to the trip fund`, timestamp: ts, idSuffix: '_t' });
+  await logTimelineEvent({ tripId, type: 'contribution', title: `${traveler} contributed ${label} to the trip fund`, timestamp: ts, idSuffix: '_t', metadata: { id, traveler, amount, currency } });
   return id;
+}
+
+// ---- Contribution editing: same snapshot-then-update discipline as expenses ----
+export async function updateContribution(tripId, contributionId, newAmount) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM contributions WHERE id = ?', contributionId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO contribution_history (id, contribution_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, contributionId, tripId, JSON.stringify(existing), 'edit', Date.now()
+  );
+  const ts = Date.now();
+  await db.runAsync('UPDATE contributions SET amount = ?, edited_at = ? WHERE id = ?', newAmount, ts, contributionId);
+  await logTimelineEvent({ tripId, type: 'contribution', title: `${existing.traveler} changed a contribution: ${existing.currency}${existing.amount} → ${existing.currency}${newAmount}`, timestamp: ts, idSuffix: '_ce', metadata: { id: contributionId, edited: true, traveler: existing.traveler, oldValue: existing.amount, newValue: newAmount, currency: existing.currency } });
+  return { ok: true };
+}
+
+export async function deleteContribution(tripId, contributionId) {
+  const db = await getDB();
+  const existing = await db.getFirstAsync('SELECT * FROM contributions WHERE id = ?', contributionId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
+  await db.runAsync(
+    'INSERT INTO contribution_history (id, contribution_id, trip_id, snapshot, action, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    historyId, contributionId, tripId, JSON.stringify(existing), 'delete', Date.now()
+  );
+  await db.runAsync('DELETE FROM contributions WHERE id = ?', contributionId);
+  const ts = Date.now();
+  await logTimelineEvent({ tripId, type: 'contribution', title: `${existing.traveler} removed a contribution of ${existing.currency}${existing.amount}`, timestamp: ts, idSuffix: '_cdel' });
+  return { ok: true };
 }
 
 // ---- Trip lifecycle: minimal active/closed status, needed only to gate Final Settlement ----

@@ -60,7 +60,7 @@ export default function FinanceTab({ tripId, finance, onChanged }) {
 }
 
 const makeStyles = (theme) => StyleSheet.create({
-  section: { flex: 1 },
+  section: { flex: 1, paddingBottom: 88 }, // clears the floating action button, same fix as SettlementTab
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: theme.space.sm },
   rowDivider: { borderBottomWidth: 1, borderBottomColor: theme.line },
   rowLabel: { fontSize: theme.type.body, color: theme.inkSoft },

@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -26,9 +27,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B6169",
-          "image": "./assets/icon.png",
-          "imageWidth": 120
+          "backgroundColor": "#0B6169"
         }
       ],
       [
