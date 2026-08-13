@@ -36,7 +36,7 @@ export default function ExpensesTab({ expenses, baseCurrency, onOpenItem }) {
             <LedgerRow
               key={item.id}
               isLast={i === expenses.length - 1}
-              onPress={onOpenItem ? () => onOpenItem({ type: 'expense', metadata: JSON.stringify({ id: item.id }) }) : undefined}
+              onPress={onOpenItem ? () => onOpenItem({ id: `expense_${item.id}`, type: 'expense', metadata: JSON.stringify({ id: item.id }) }) : undefined}
             >
               <View style={styles.rowMain}>
                 <Text style={styles.emoji}>{CATEGORY_EMOJI[item.category] || '🧾'}</Text>

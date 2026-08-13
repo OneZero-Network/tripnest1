@@ -31,6 +31,10 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
   const [ePaidBy, setEPaidBy] = useState(null);
   const [eFundingSource, setEFundingSource] = useState('personal');
   const [eDescription, setEDescription] = useState('');
+  const [eSplitParticipants, setESplitParticipants] = useState(null); // null = everyone
+  const [eSplitType, setESplitType] = useState('equal');
+  const [eSplitValues, setESplitValues] = useState({});
+  const [eSplitError, setESplitError] = useState(null);
   const [cAmount, setCAmount] = useState('');
   const [editingContribution, setEditingContribution] = useState(false);
   const [xFromAmount, setXFromAmount] = useState('');
@@ -56,7 +60,16 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
     setEditingExpense(false);
     setEditingContribution(false);
     setEditingExchange(false);
-  }, [event?.id]);
+    // Keyed on the underlying RECORD's identity (type + metadata.id), not event.id.
+    // event.id is the timeline row's own id when opened from Activity — but callers
+    // opening a record directly (e.g. the Expenses tab, which has no timeline row to
+    // reference) build a lightweight { type, metadata } object with no `id` at all.
+    // Keying on event?.id silently broke exactly that path: switching between two
+    // such objects looks like "no change" to React since both have the same
+    // (undefined) id, so this effect never re-ran and the sheet stayed empty. Keying on
+    // the actual record identity means it re-fetches correctly regardless of whether
+    // the caller happens to also attach a timeline id.
+  }, [event?.type, meta?.id]);
 
   useEffect(() => {
     if (record?.text != null) setEditText(record.text);
@@ -98,10 +111,22 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
   const saveExpense = async () => {
     const amt = parseFloat(eAmount);
     if (!amt || amt <= 0 || !ePaidBy) return;
-    await updateExpense(tripId, record.id, {
+    setESplitError(null);
+    const usesSplitType = eSplitType !== 'equal';
+    const result = await updateExpense(tripId, record.id, {
       amount: amt, category: eCategory, paidBy: ePaidBy, fundingSource: eFundingSource,
       description: eDescription.trim() || null,
+      participants: eSplitParticipants || (usesSplitType ? travelers.map((t) => t.name) : undefined),
+      splitType: usesSplitType ? eSplitType : (eSplitParticipants ? 'equal' : undefined),
+      splitValues: usesSplitType ? eSplitValues : undefined,
     });
+    if (result && result.ok === false) {
+      // Rejected split — e.g. custom amounts don't sum to the (possibly just-changed)
+      // total, or percentages don't sum to 100. Surface it and stay in the edit form
+      // rather than silently closing as if nothing happened.
+      setESplitError(result.error || 'That split doesn\'t add up — check the numbers.');
+      return;
+    }
     onChanged();
     onClose();
   };
@@ -195,7 +220,24 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
               </Text>
             ) : null}
             <View style={[styles(theme).row, { marginTop: theme.space.lg }]}>
-              <PrimaryButton label="Edit" icon="edit-2" onPress={() => setEditingExpense(true)} style={{ flex: 1, marginEnd: theme.space.sm }} />
+              <PrimaryButton label="Edit" icon="edit-2" onPress={() => {
+                // Seed the split editor from what's actually on file — participants,
+                // method, and original input values (40%/30%/30%, not just derived ₹) —
+                // so editing a percentage/shares split doesn't force starting over.
+                if (splits && splits.length > 0) {
+                  setESplitParticipants(splits.map((s) => s.traveler_name));
+                  setESplitType(record.split_type || 'equal');
+                  const vals = {};
+                  splits.forEach((s) => { if (s.input_value != null) vals[s.traveler_name] = String(s.input_value); });
+                  setESplitValues(vals);
+                } else {
+                  setESplitParticipants(null);
+                  setESplitType('equal');
+                  setESplitValues({});
+                }
+                setESplitError(null);
+                setEditingExpense(true);
+              }} style={{ flex: 1, marginEnd: theme.space.sm }} />
               <SecondaryButton label="Delete" onPress={() => setPendingDelete(true)} style={{ flex: 1 }} />
             </View>
           </>
@@ -245,6 +287,70 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
               placeholder="Description (optional)"
               placeholderTextColor={theme.inkMute}
             />
+
+            {travelers.length > 1 && (
+              <>
+                <Text style={styles(theme).label}>Split between</Text>
+                <View style={styles(theme).chipRow}>
+                  {travelers.map((t) => {
+                    const active = eSplitParticipants ? eSplitParticipants.includes(t.name) : true;
+                    return (
+                      <Chip
+                        key={t.id}
+                        label={t.name}
+                        active={active}
+                        onPress={() => {
+                          const current = eSplitParticipants ?? travelers.map((tr) => tr.name);
+                          const next = current.includes(t.name) ? current.filter((n) => n !== t.name) : [...current, t.name];
+                          setESplitParticipants(next.length === travelers.length ? null : next);
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+
+                <Text style={styles(theme).label}>How should it be split?</Text>
+                <View style={styles(theme).chipRow}>
+                  {[
+                    { key: 'equal', label: 'Equal' },
+                    { key: 'custom', label: 'Custom amount' },
+                    { key: 'percentage', label: 'Percentage' },
+                    { key: 'shares', label: 'Shares' },
+                  ].map((m) => (
+                    <Chip key={m.key} label={m.label} active={eSplitType === m.key} onPress={() => { setESplitType(m.key); setESplitValues({}); }} />
+                  ))}
+                </View>
+
+                {eSplitType !== 'equal' && (() => {
+                  const activeNames = eSplitParticipants ?? travelers.map((t) => t.name);
+                  const sum = activeNames.reduce((s, n) => s + (parseFloat(eSplitValues[n]) || 0), 0);
+                  const target = eSplitType === 'percentage' ? 100 : (eSplitType === 'custom' ? parseFloat(eAmount) || 0 : null);
+                  return (
+                    <>
+                      {activeNames.map((name) => (
+                        <View key={name} style={styles(theme).splitValueRow}>
+                          <Text style={styles(theme).splitValueName}>{name}</Text>
+                          <TextInput
+                            style={styles(theme).splitValueInput}
+                            placeholder={eSplitType === 'percentage' ? '%' : eSplitType === 'shares' ? 'shares' : '0.00'}
+                            placeholderTextColor={theme.inkMute}
+                            keyboardType="numeric"
+                            value={eSplitValues[name] ?? ''}
+                            onChangeText={(v) => setESplitValues((prev) => ({ ...prev, [name]: v }))}
+                          />
+                        </View>
+                      ))}
+                      {target != null && (
+                        <Text style={styles(theme).muted}>
+                          {eSplitType === 'percentage' ? `Total: ${sum.toFixed(2)}% (needs to be 100%)` : `Total: ${sum.toFixed(2)} (needs to be ${target.toFixed(2)})`}
+                        </Text>
+                      )}
+                    </>
+                  );
+                })()}
+                {eSplitError && <Text style={[styles(theme).muted, { color: theme.danger || 'red' }]}>{eSplitError}</Text>}
+              </>
+            )}
 
             <Text style={[styles(theme).muted, { marginTop: theme.space.sm }]}>
               This won't erase the original — the prior amount/category stays visible in Activity as an edit record.
@@ -359,4 +465,7 @@ const styles = (theme) => StyleSheet.create({
   label: { fontSize: theme.type.caption, fontWeight: theme.weight.semibold, color: theme.inkMute, marginTop: theme.space.md, marginBottom: theme.space.xs, textTransform: 'uppercase' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs },
   input: { backgroundColor: theme.bg, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 14, minHeight: theme.a11y.minTouchTarget, color: theme.ink },
+  splitValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.space.xs },
+  splitValueName: { color: theme.ink, fontSize: 14 },
+  splitValueInput: { borderWidth: 1, borderColor: theme.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, width: 100, textAlign: 'right', color: theme.ink },
 });

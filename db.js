@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { scheduleItineraryNotification, cancelItineraryNotification } from './notifications';
+import { scheduleItineraryNotification, cancelItineraryNotification } from './notifications.js';
 
 let db;
 
@@ -220,6 +220,26 @@ const MIGRATIONS = [
     // "Adnan converted ₹15,000, Tariq converted ₹8,000" instead of one shared number
     // nobody can attribute.
     sql: `ALTER TABLE currency_exchanges ADD COLUMN converted_by TEXT;`,
+  },
+  {
+    name: '029_add_expense_split_type',
+    // Records HOW an expense was divided ('equal' | 'custom' | 'percentage' | 'shares'),
+    // not just the resulting per-person amounts already stored in expense_splits. Without
+    // this, editing an expense that was split by percentage or shares would have no way
+    // to re-render the original entry fields ("40% / 30% / 30%") — only the derived
+    // rupee amounts, which is lossy and would force the user to re-enter the split from
+    // scratch on every edit. NULL/absent means 'equal', matching every pre-existing
+    // expense and every expense with no expense_splits rows at all.
+    sql: `ALTER TABLE expenses ADD COLUMN split_type TEXT;`,
+  },
+  {
+    name: '030_add_expense_split_input',
+    // The raw input value per traveler for 'percentage' and 'shares' splits (e.g. "40" for
+    // 40%, or "2" for 2 shares) — expense_splits.share_amount stores the DERIVED base-
+    // currency amount either way, which is what settlement needs, but the original input
+    // is needed to redisplay/re-edit a percentage or shares split without reverse-
+    // engineering it from a rounded rupee amount.
+    sql: `ALTER TABLE expense_splits ADD COLUMN input_value REAL;`,
   },
 ];
 
@@ -519,6 +539,55 @@ export async function renameTrip(tripId, newName) {
   return { ok: true };
 }
 
+// ---- Permanently deleting a trip ----
+// Unlike closing a trip (reversible — reopenTrip just flips status back), this actually
+// removes the trip and everything under it. There is no tombstone/history table for the
+// trip itself the way there is for expenses/contributions/exchanges — "delete the whole
+// trip" is the one place in this app where "gone" really does mean gone, which is why it
+// requires the caller to have already gotten explicit destructive confirmation (the UI
+// layer's job, same as every other `destructive` ConfirmDialog in this app) before
+// calling this at all.
+//
+// Every table that references trip_id gets cleaned up explicitly, in one pass — there is
+// no ON DELETE CASCADE in this schema (SQLite foreign keys aren't enforced by default the
+// way this app opens its connection), so "delete the trip row" alone would silently leave
+// orphaned expenses/contributions/exchanges/etc. behind forever. Itinerary notifications
+// are cancelled individually first since those are OS-level scheduled reminders, not just
+// rows in this database — deleting the row without cancelling the notification would
+// leave a reminder still queued to fire for a trip that no longer exists.
+export async function deleteTrip(tripId) {
+  const db = await getDB();
+  const trip = await db.getFirstAsync('SELECT * FROM trips WHERE id = ?', tripId);
+  if (!trip) return { ok: false, reason: 'not_found' };
+
+  const itineraryItems = await db.getAllAsync('SELECT notification_id FROM itinerary_items WHERE trip_id = ?', tripId);
+  for (const item of itineraryItems) {
+    if (item.notification_id) await cancelItineraryNotification(item.notification_id);
+  }
+
+  // expense_splits/expense_history/contribution_history/exchange_history are keyed by
+  // their parent record's id, not trip_id directly, so they're cleared via a subquery
+  // against this trip's own expenses/contributions/exchanges rather than needing a
+  // trip_id column of their own on expense_splits.
+  await db.runAsync('DELETE FROM expense_splits WHERE expense_id IN (SELECT id FROM expenses WHERE trip_id = ?)', tripId);
+  await db.runAsync('DELETE FROM expense_history WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM contribution_history WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM exchange_history WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM expenses WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM contributions WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM currency_exchanges WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM settlements WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM itinerary_items WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM notes WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM documents WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM drafts WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM timeline WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM travelers WHERE trip_id = ?', tripId);
+  await db.runAsync('DELETE FROM trips WHERE id = ?', tripId);
+
+  return { ok: true, name: trip.name };
+}
+
 export async function addExpense(tripId, paidBy, amount, description, opts = {}) {
   const db = await getDB();
   const id = String(Date.now()) + Math.random().toString(36).slice(2);
@@ -531,24 +600,33 @@ export async function addExpense(tripId, paidBy, amount, description, opts = {})
   if (fxRate == null) throw new Error(`fxRate is required when currency (${currency}) differs from the trip's base currency (${baseCurrency})`);
   const category = opts.category || null;
   const fundingSource = opts.fundingSource === 'bank' ? 'bank' : 'personal';
+
+  // Validate the split BEFORE writing anything — an expense whose split doesn't
+  // reconcile must never reach the database, per the "validate before save" requirement.
+  // Only runs when a specific method/participant list was actually requested; omitting
+  // both keeps the old default (equal split among every current traveler, computed
+  // dynamically at settlement time, not stored here at all).
+  let splitRows = null;
+  const splitType = opts.splitType || (opts.participants ? 'equal' : null);
+  if (opts.participants && opts.participants.length > 0) {
+    const { resolveSplit } = await import('./finance/calculator.js');
+    const baseAmount = amount * fxRate;
+    const { rows, error } = resolveSplit(baseAmount, opts.participants, splitType, opts.splitValues);
+    if (error) throw new Error(error);
+    splitRows = rows;
+  }
+
   await db.runAsync(
-    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, category, funding_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, tripId, paidBy, amount, description, currency, fxRate, category, fundingSource, ts
+    'INSERT INTO expenses (id, trip_id, paid_by, amount, description, currency, fx_rate, category, funding_source, split_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, tripId, paidBy, amount, description, currency, fxRate, category, fundingSource, splitType, ts
   );
 
-  // Optional explicit participant list — who actually shares THIS expense, not
-  // necessarily every traveler on the trip. `participants` is an array of traveler names;
-  // splits equally among exactly those names. Omit entirely for the old/default behavior
-  // (equal split among every current traveler, computed dynamically at settlement time,
-  // not stored — so it stays correct even if travelers are added or removed later).
-  if (opts.participants && opts.participants.length > 0) {
-    const baseAmount = amount * fxRate;
-    const perPerson = +(baseAmount / opts.participants.length).toFixed(2);
-    for (const name of opts.participants) {
+  if (splitRows) {
+    for (const row of splitRows) {
       const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
       await db.runAsync(
-        'INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount) VALUES (?, ?, ?, ?)',
-        splitId, id, name, perPerson
+        'INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount, input_value) VALUES (?, ?, ?, ?, ?)',
+        splitId, id, row.name, row.shareAmount, row.inputValue
       );
     }
   }
@@ -598,15 +676,66 @@ export async function updateExpense(tripId, expenseId, changes) {
 
   // Re-derive the split from scratch rather than trying to patch individual rows —
   // simpler and correct either way (explicit participant list, or back to "everyone").
+  // Validated the same way as addExpense — a bad edit (percentages that no longer sum to
+  // 100 after removing a participant, custom amounts that no longer match a changed
+  // total) is rejected before any row is touched, not saved and left inconsistent.
+  let nextSplitType = existing.split_type;
   if (changes.participants !== undefined) {
-    await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
     if (changes.participants && changes.participants.length > 0) {
+      const { resolveSplit } = await import('./finance/calculator.js');
       const baseAmount = next.amount * next.fx_rate;
-      const perPerson = +(baseAmount / changes.participants.length).toFixed(2);
-      for (const name of changes.participants) {
+      const splitType = changes.splitType || existing.split_type || 'equal';
+      const { rows, error } = resolveSplit(baseAmount, changes.participants, splitType, changes.splitValues);
+      if (error) return { ok: false, reason: 'invalid_split', error };
+      await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+      for (const row of rows) {
         const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
-        await db.runAsync('INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount) VALUES (?, ?, ?, ?)', splitId, expenseId, name, perPerson);
+        await db.runAsync('INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount, input_value) VALUES (?, ?, ?, ?, ?)', splitId, expenseId, row.name, row.shareAmount, row.inputValue);
       }
+      nextSplitType = splitType;
+    } else {
+      await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+      nextSplitType = null;
+    }
+    await db.runAsync('UPDATE expenses SET split_type = ? WHERE id = ?', nextSplitType, expenseId);
+  } else if ((changes.amount !== undefined || changes.fxRate !== undefined) && (existing.split_type === 'custom' || existing.split_type === 'percentage' || existing.split_type === 'shares')) {
+    // Amount changed but the split method/participants didn't — a stored 'custom' split
+    // would silently stop summing to the new total, and percentage/shares splits need
+    // their rupee amounts recomputed against the new base amount even though the
+    // percentages/share-ratios themselves are unchanged. Re-resolve from the input_value
+    // already on file for each participant rather than requiring the caller to resend it.
+    const existingSplits = await db.getAllAsync('SELECT traveler_name, input_value FROM expense_splits WHERE expense_id = ?', expenseId);
+    if (existingSplits.length > 0) {
+      const { resolveSplit } = await import('./finance/calculator.js');
+      const baseAmount = next.amount * next.fx_rate;
+      const names = existingSplits.map((r) => r.traveler_name);
+      const splitValues = {};
+      existingSplits.forEach((r) => { splitValues[r.traveler_name] = r.input_value; });
+      const { rows, error } = resolveSplit(baseAmount, names, existing.split_type, splitValues);
+      if (error) return { ok: false, reason: 'invalid_split', error: `${error} Update the split manually.` };
+      await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+      for (const row of rows) {
+        const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
+        await db.runAsync('INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount, input_value) VALUES (?, ?, ?, ?, ?)', splitId, expenseId, row.name, row.shareAmount, row.inputValue);
+      }
+    }
+  } else if (changes.splitType !== undefined && changes.splitType !== existing.split_type) {
+    // Split method changed but participant list wasn't re-sent — re-resolve against the
+    // participants already on file for this expense, using the new values provided.
+    const existingSplits = await db.getAllAsync('SELECT traveler_name FROM expense_splits WHERE expense_id = ?', expenseId);
+    const names = existingSplits.map((r) => r.traveler_name);
+    if (names.length > 0) {
+      const { resolveSplit } = await import('./finance/calculator.js');
+      const baseAmount = next.amount * next.fx_rate;
+      const { rows, error } = resolveSplit(baseAmount, names, changes.splitType, changes.splitValues);
+      if (error) return { ok: false, reason: 'invalid_split', error };
+      await db.runAsync('DELETE FROM expense_splits WHERE expense_id = ?', expenseId);
+      for (const row of rows) {
+        const splitId = String(Date.now()) + Math.random().toString(36).slice(2);
+        await db.runAsync('INSERT INTO expense_splits (id, expense_id, traveler_name, share_amount, input_value) VALUES (?, ?, ?, ?, ?)', splitId, expenseId, row.name, row.shareAmount, row.inputValue);
+      }
+      nextSplitType = changes.splitType;
+      await db.runAsync('UPDATE expenses SET split_type = ? WHERE id = ?', nextSplitType, expenseId);
     }
   }
 
@@ -860,7 +989,7 @@ export async function recordSettlement(tripId, from, to, amount) {
 export async function closeTrip(tripId, { force = false } = {}) {
   const db = await getDB();
   if (!force) {
-    const { computeBankSettlement, computeSettlement } = await import('./finance/calculator');
+    const { computeBankSettlement, computeSettlement } = await import('./finance/calculator.js');
     const [bankSettlement, settlement] = await Promise.all([
       computeBankSettlement(tripId),
       computeSettlement(tripId),
@@ -890,8 +1019,8 @@ export async function reopenTrip(tripId) {
 // ---- Finance (settlement, trip fund, finance projection) lives in finance/calculator.js ----
 // Re-exported here so every existing "from '../db'" import across the app keeps working
 // unchanged — this is an internal file reorganization, not a public API change.
-export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement, computeFinalBankSettlement } from './finance/calculator';
-import { computeSettlement, computeFinance } from './finance/calculator';
+export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement, computeFinalBankSettlement } from './finance/calculator.js';
+import { computeSettlement, computeFinance } from './finance/calculator.js';
 
 // ---- Single entry point for TripScreen's load cycle ----
 // Computes settlement exactly once, then feeds it into both Finance and Today —

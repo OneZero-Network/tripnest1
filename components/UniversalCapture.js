@@ -41,6 +41,8 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
   const [category, setCategory] = useState(null);
   const [customCategory, setCustomCategory] = useState('');
   const [splitParticipants, setSplitParticipants] = useState(null); // null = everyone (default, unchanged behavior)
+  const [splitType, setSplitType] = useState('equal'); // 'equal' | 'custom' | 'percentage' | 'shares'
+  const [splitValues, setSplitValues] = useState({}); // { travelerName: string } — raw text input per method
   const [contribTraveler, setContribTraveler] = useState(null);
   const [currency, setCurrency] = useState(baseCurrency);
   const [fxRate, setFxRate] = useState('');
@@ -58,6 +60,7 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
     setActiveAction(null); setText(''); setAmount(''); setPayer(null);
     setFundingSource('personal'); setCategory(null); setCustomCategory(''); setContribTraveler(null);
     setCurrency(baseCurrency); setFxRate(''); setShowCurrency(false); setSplitParticipants(null);
+    setSplitType('equal'); setSplitValues({});
     setExFromAmount(''); setExToAmount(''); setExCurrency(foreignCurrency); setExConvertedBy(null);
   };
   const close = () => { setOpen(false); reset(); setFormError(null); };
@@ -120,10 +123,21 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
       // "Other" needs its own label — saving it as the literal string "Other" with no
       // way to say what it actually was is exactly what made this feel stuck/incomplete.
       const finalCategory = category === 'Other' ? (customCategory.trim() || 'Other') : category;
-      await addExpense(tripId, payer, amt, text.trim() || null, {
-        currency, fxRate: isForeign ? parseFloat(fxRate) : 1, category: finalCategory, fundingSource,
-        participants: splitParticipants || undefined,
-      });
+      const activeParticipants = splitParticipants ?? travelers.map((t) => t.name);
+      const usesSplitType = splitType !== 'equal';
+      try {
+        await addExpense(tripId, payer, amt, text.trim() || null, {
+          currency, fxRate: isForeign ? parseFloat(fxRate) : 1, category: finalCategory, fundingSource,
+          participants: splitParticipants || (usesSplitType ? activeParticipants : undefined),
+          splitType: usesSplitType ? splitType : undefined,
+          splitValues: usesSplitType ? splitValues : undefined,
+        });
+      } catch (err) {
+        // resolveSplit throws when custom amounts/percentages/shares don't reconcile —
+        // surfaced as a form error, exactly like every other validation above, rather than
+        // letting a mismatched split silently fail to save with no explanation.
+        return setFormError(err.message || 'That split doesn\'t add up — check the numbers.');
+      }
     } else if (activeAction === 'contribution') {
       const amt = parseFloat(amount);
       if (!amt) return setFormError('Enter an amount');
@@ -249,6 +263,51 @@ export default function UniversalCapture({ tripId, navigation, travelers = [], b
                         return <Chip key={t.id} label={t.name} active={selected} onPress={() => toggleParticipant(t.name)} />;
                       })}
                     </View>
+
+                    <Text style={styles.fieldLabel}>How should it be split?</Text>
+                    <View style={styles.chipRow}>
+                      {[
+                        { key: 'equal', label: 'Equal' },
+                        { key: 'custom', label: 'Custom amount' },
+                        { key: 'percentage', label: 'Percentage' },
+                        { key: 'shares', label: 'Shares' },
+                      ].map((m) => (
+                        <Chip key={m.key} label={m.label} active={splitType === m.key} onPress={() => { setSplitType(m.key); setSplitValues({}); }} />
+                      ))}
+                    </View>
+
+                    {splitType !== 'equal' && (() => {
+                      const activeNames = splitParticipants ?? travelers.map((t) => t.name);
+                      const sum = activeNames.reduce((s, n) => s + (parseFloat(splitValues[n]) || 0), 0);
+                      const target = splitType === 'percentage' ? 100 : (splitType === 'custom' ? parseFloat(amount) || 0 : null);
+                      return (
+                        <>
+                          {activeNames.map((name) => (
+                            <View key={name} style={styles.splitValueRow}>
+                              <Text style={styles.splitValueName}>{name}</Text>
+                              <TextInput
+                                style={styles.splitValueInput}
+                                placeholder={splitType === 'percentage' ? '%' : splitType === 'shares' ? 'shares' : '0.00'}
+                                placeholderTextColor={theme.inkMute}
+                                keyboardType="numeric"
+                                value={splitValues[name] ?? ''}
+                                onChangeText={(v) => setSplitValues((prev) => ({ ...prev, [name]: v }))}
+                              />
+                            </View>
+                          ))}
+                          {target != null && (
+                            <Text style={styles.hint}>
+                              {splitType === 'percentage'
+                                ? `Total: ${sum.toFixed(2)}% (needs to be 100%)`
+                                : `Total: ${sum.toFixed(2)} (needs to be ${target.toFixed(2)})`}
+                            </Text>
+                          )}
+                          {splitType === 'shares' && (
+                            <Text style={styles.hint}>Total shares: {sum.toFixed(2)} — split proportionally, any positive numbers.</Text>
+                          )}
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </>
@@ -355,6 +414,9 @@ const makeStyles = (theme) => StyleSheet.create({
   hint: { color: theme.inkMute, fontSize: 11.5, marginBottom: theme.space.sm },
   fieldLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, marginBottom: theme.space.xs, marginTop: theme.space.xs, textTransform: 'uppercase', letterSpacing: 0.4 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.space.sm },
+  splitValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.space.xs ?? 6 },
+  splitValueName: { color: theme.ink, fontSize: 14 },
+  splitValueInput: { borderWidth: 1, borderColor: theme.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, width: 100, textAlign: 'right', color: theme.ink },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   currencyToggle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.brandDeep, paddingHorizontal: 4, marginBottom: theme.space.sm },
 });

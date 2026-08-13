@@ -2,6 +2,7 @@
   "name": "tripnest",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@react-navigation/native": "^7.3.14",
@@ -30,7 +31,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "node --test test/"
   },
   "private": true
 }

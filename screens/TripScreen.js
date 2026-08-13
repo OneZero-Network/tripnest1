@@ -5,7 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDB, computeTripData, getDrafts, renameTrip } from '../db';
+import { getDB, computeTripData, getDrafts, renameTrip, deleteTrip } from '../db';
 import CockpitCard from '../components/CockpitCard';
 import TravelersTab from '../components/TravelersTab';
 import TimelineTab from '../components/TimelineTab';
@@ -16,7 +16,7 @@ import ExpensesTab from '../components/ExpensesTab';
 import UniversalCapture from '../components/UniversalCapture';
 import ActivityItemSheet from '../components/ActivityItemSheet';
 import SafeModeCard from '../components/SafeModeCard';
-import { ErrorState, Container, BottomSheet, PrimaryButton, useTheme } from '../components/UI';
+import { ErrorState, Container, BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, useTheme } from '../components/UI';
 
 // Five areas, each answering exactly one question — per the "think in questions, not
 // screens" review: Overview ("how's the trip going"), Members ("how's each traveler
@@ -44,6 +44,8 @@ export default function TripScreen({ route, navigation }) {
   const [currentTripName, setCurrentTripName] = useState(tripName);
   const [renamingTrip, setRenamingTrip] = useState(false);
   const [tripNameDraft, setTripNameDraft] = useState(tripName);
+  const [pendingDeleteTrip, setPendingDeleteTrip] = useState(false);
+  const [deletingTrip, setDeletingTrip] = useState(false);
   const [tab, setTab] = useState('Overview');
 
   // A subtle cross-fade/resize when switching tabs — cheap (one built-in RN API call,
@@ -144,6 +146,20 @@ export default function TripScreen({ route, navigation }) {
     navigation.setParams({ tripName: trimmed });
     setRenamingTrip(false);
     loadAll();
+  };
+
+  // Deleting a trip is permanent — no undo, no reopen path (that's what Close/Reopen is
+  // for). Requires an explicit destructive confirmation first (see the ConfirmDialog
+  // below), same pattern as every other irreversible action in this app.
+  const confirmDeleteTrip = async () => {
+    setDeletingTrip(true);
+    const result = await deleteTrip(tripId);
+    setDeletingTrip(false);
+    setPendingDeleteTrip(false);
+    if (result.ok) {
+      setRenamingTrip(false);
+      navigation.canGoBack() ? navigation.goBack() : navigation.replace('Home');
+    }
   };
 
   // Handles the case where the app is already open on this trip and the shortcut fires
@@ -290,7 +306,26 @@ export default function TripScreen({ route, navigation }) {
           placeholderTextColor={theme.inkMute}
         />
         <PrimaryButton label="Save" onPress={saveTripName} style={{ marginTop: theme.space.sm }} />
+
+        <View style={styles.dangerZoneDivider} />
+        <Text style={styles.dangerZoneLabel}>Danger zone</Text>
+        <SecondaryButton
+          label="Delete trip"
+          icon="trash-2"
+          onPress={() => setPendingDeleteTrip(true)}
+          style={styles.deleteTripButton}
+        />
       </BottomSheet>
+
+      <ConfirmDialog
+        visible={pendingDeleteTrip}
+        title={`Delete "${currentTripName}"?`}
+        message="This permanently removes the trip and everything in it — expenses, contributions, exchanges, settlements, notes, documents, and activity history. This cannot be undone."
+        confirmLabel={deletingTrip ? 'Deleting…' : 'Delete trip'}
+        destructive
+        onConfirm={confirmDeleteTrip}
+        onCancel={() => setPendingDeleteTrip(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -298,6 +333,9 @@ export default function TripScreen({ route, navigation }) {
 const makeStyles = (theme) => StyleSheet.create({
   renameTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.sm },
   renameInput: { backgroundColor: theme.bg, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 14, minHeight: theme.a11y.minTouchTarget, color: theme.ink, fontSize: 16 },
+  dangerZoneDivider: { height: 1, backgroundColor: theme.line, marginTop: theme.space.lg, marginBottom: theme.space.md },
+  dangerZoneLabel: { fontSize: theme.type.label, fontWeight: theme.weight.semibold, color: theme.inkMute, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: theme.space.xs },
+  deleteTripButton: { borderColor: theme.danger },
   advancedOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.bg, zIndex: 40, paddingTop: 56 },
   advancedHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.space.lg, marginBottom: theme.space.md },
   advancedTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink },
