@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme, Animated, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, TextInput, Modal, StyleSheet, useWindowDimensions, useColorScheme, Animated, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 // ---- Currency symbol lookup: falls back to the code itself + a space for anything not
@@ -378,10 +378,23 @@ export function BottomSheet({ visible, onClose, children }) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose}>
-          <View style={styles.sheetCard} onStartShouldSetResponder={() => true}>
+          {/* Pressable with a no-op onPress, not a plain View with a manual
+              onStartShouldSetResponder — that raw responder override unconditionally
+              claims the touch for the ENTIRE card the instant a gesture starts inside
+              it, before any nested TextInput's own native touch handling gets a chance
+              to claim it for itself. On Android that's exactly what made every field in
+              every BottomSheet form (Add Expense, Edit, Contribution, Exchange, Rename)
+              refuse to focus/accept typing: tapping a field never actually gave the
+              field the responder, so no keyboard input ever reached it. Pressable
+              participates in RN's responder negotiation the same idiomatic way
+              TouchableOpacity does (used one line up for the backdrop) — it still stops
+              a tap on empty card padding from bubbling through to close the sheet, but
+              without pre-emptively blocking a nested TextInput from claiming its own
+              touch first. */}
+          <Pressable style={styles.sheetCard} onPress={() => {}}>
             <View style={styles.sheetHandle} />
             {children}
-          </View>
+          </Pressable>
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </Modal>
