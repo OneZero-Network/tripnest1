@@ -2,7 +2,7 @@
 // db.js's general schema/query concerns per the "finance calculations separate from UI
 // and from the rest of the database layer" direction. db.js re-exports these so no other
 // file's imports had to change — this is an internal reorganization, not a public API change.
-import { getDB } from '../db';
+import { getDB } from '../db.js';
 
 // Trip Fund target: equal split only for V2 — Number of Travelers × Contribution Per Person.
 // Organizer sets the per-person amount; target is always derived from current traveler count,
@@ -10,6 +10,76 @@ import { getDB } from '../db';
 export async function setContributionPerPerson(tripId, amount) {
   const db = await getDB();
   await db.runAsync('UPDATE trips SET contribution_per_person = ? WHERE id = ?', amount, tripId);
+}
+
+// ---- Split-method resolution: turns "how the user wants to split it" into concrete
+// per-person base-currency amounts, with validation baked in so a bad split can never
+// reach expense_splits. This is the ONLY place split amounts get computed at write time —
+// computeExpenseShares (below) just reads back whatever share_amount was stored, so it
+// stays split-method-agnostic and doesn't need to know equal from percentage from shares.
+//
+// Returns { rows: [{ name, shareAmount, inputValue }], error: null } on success, or
+// { rows: null, error: 'message' } on a split that doesn't reconcile — callers must check
+// `error` and refuse to save rather than silently persisting a mismatched split.
+const EPS = 0.01;
+export function resolveSplit(baseAmount, participants, splitType, splitValues = {}) {
+  const names = [...new Set(participants)];
+  if (names.length === 0) return { rows: null, error: 'Select at least one participant.' };
+
+  const type = splitType || 'equal';
+
+  if (type === 'equal') {
+    const per = +(baseAmount / names.length).toFixed(2);
+    // Give the last person the rounding remainder so the split sums to EXACTLY baseAmount
+    // rather than drifting a paisa short/over when it doesn't divide evenly (₹10 / 3).
+    const rows = names.map((name, i) => ({
+      name,
+      shareAmount: i === names.length - 1 ? +(baseAmount - per * (names.length - 1)).toFixed(2) : per,
+      inputValue: null,
+    }));
+    return { rows, error: null };
+  }
+
+  if (type === 'custom') {
+    const rows = names.map((name) => ({ name, shareAmount: +Number(splitValues[name] || 0).toFixed(2), inputValue: null }));
+    const sum = rows.reduce((s, r) => s + r.shareAmount, 0);
+    if (Math.abs(sum - baseAmount) > EPS) {
+      return { rows: null, error: `Custom amounts total ${sum.toFixed(2)}, but the expense is ${baseAmount.toFixed(2)}.` };
+    }
+    return { rows, error: null };
+  }
+
+  if (type === 'percentage') {
+    const pctSum = names.reduce((s, n) => s + Number(splitValues[n] || 0), 0);
+    if (Math.abs(pctSum - 100) > EPS) {
+      return { rows: null, error: `Percentages total ${pctSum.toFixed(2)}%, not 100%.` };
+    }
+    const rows = names.map((name, i) => {
+      const pct = Number(splitValues[name] || 0);
+      const amt = i === names.length - 1
+        ? +(baseAmount - names.slice(0, -1).reduce((s, n) => s + +((baseAmount * Number(splitValues[n] || 0)) / 100).toFixed(2), 0)).toFixed(2)
+        : +((baseAmount * pct) / 100).toFixed(2);
+      return { name, shareAmount: amt, inputValue: pct };
+    });
+    return { rows, error: null };
+  }
+
+  if (type === 'shares') {
+    const shareSum = names.reduce((s, n) => s + Number(splitValues[n] || 0), 0);
+    if (shareSum <= 0) return { rows: null, error: 'Enter at least one positive share.' };
+    const rows = names.map((name, i) => {
+      const sh = Number(splitValues[name] || 0);
+      if (sh < 0) return null;
+      const amt = i === names.length - 1
+        ? +(baseAmount - names.slice(0, -1).reduce((s, n) => s + +((baseAmount * Number(splitValues[n] || 0)) / shareSum).toFixed(2), 0)).toFixed(2)
+        : +((baseAmount * sh) / shareSum).toFixed(2);
+      return { name, shareAmount: amt, inputValue: sh };
+    });
+    if (rows.some((r) => r === null)) return { rows: null, error: 'Shares cannot be negative.' };
+    return { rows, error: null };
+  }
+
+  return { rows: null, error: `Unknown split type: ${type}` };
 }
 
 // ---- Per-expense share computation ----
