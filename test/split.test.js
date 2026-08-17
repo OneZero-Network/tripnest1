@@ -155,6 +155,49 @@ describe('addExpense / updateExpense — split integration', () => {
     assert.equal(balances['B'], -800);
   });
 
+  test('member isolation: addExpense rejects a payer who is not a member of this trip', async () => {
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Adnan'] }); // Goa — no Tariq
+    await assert.rejects(
+      () => addExpense(tripId, 'Tariq', 500, 'Should not save', { fundingSource: 'personal' }),
+      /not a member/i
+    );
+  });
+
+  test('member isolation: addExpense rejects a participant who is not a member of this trip', async () => {
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Adnan'] });
+    await assert.rejects(
+      () => addExpense(tripId, 'Ayaz', 500, 'Should not save', { fundingSource: 'personal', participants: ['Ayaz', 'Adnan', 'Tariq'] }),
+      /not a member|Tariq/i
+    );
+    const { balances } = await computeSettlement(tripId);
+    assert.equal(balances['Ayaz'], 0); // confirms nothing was actually written
+  });
+
+  test('member isolation: a member of a DIFFERENT trip cannot be saved onto this trip, even with the same tripId-shaped call', async () => {
+    const goa = await createTrip({ name: 'Goa', travelers: ['Ayaz', 'Adnan'] });
+    const dubai = await createTrip({ name: 'Dubai', travelers: ['Ayaz', 'Tariq'] });
+    // Tariq is real — just not on THIS (Goa) trip.
+    await assert.rejects(() => addExpense(goa, 'Tariq', 100, 'Wrong trip', { fundingSource: 'personal' }));
+    // Sanity: the identical call succeeds on the trip Tariq actually belongs to.
+    await assert.doesNotReject(() => addExpense(dubai, 'Tariq', 100, 'Right trip', { fundingSource: 'personal' }));
+  });
+
+  test('member isolation: updateExpense rejects reassigning payer to a non-member', async () => {
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Adnan'] });
+    const expenseId = await addExpense(tripId, 'Ayaz', 200, 'Dinner', { fundingSource: 'personal' });
+    const result = await updateExpense(tripId, expenseId, { paidBy: 'Tariq' });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'invalid_member');
+  });
+
+  test('member isolation: updateExpense rejects adding a non-member participant', async () => {
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Adnan'] });
+    const expenseId = await addExpense(tripId, 'Ayaz', 200, 'Dinner', { fundingSource: 'personal', participants: ['Ayaz', 'Adnan'] });
+    const result = await updateExpense(tripId, expenseId, { participants: ['Ayaz', 'Adnan', 'Tariq'] });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'invalid_member');
+  });
+
   test('editing a custom split amount without updating values is rejected, not silently wrong', async () => {
     const tripId = await createTrip({ travelers: ['A', 'B'] });
     const expenseId = await addExpense(tripId, 'A', 300, 'Cab', {

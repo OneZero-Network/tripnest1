@@ -65,7 +65,14 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 
   const confirmSettleAll = async () => {
     setPendingSettleAll(false);
-    for (const t of toPay) {
+    // BUG FIXED: this loop previously only iterated `toPay`, never `toRefund` — so
+    // "Mark all as settled" recorded every personal/top-up payment but silently left
+    // every Trip Bank REFUND (money owed back to a traveler, shown under "Receive
+    // money") completely untouched. That's exactly the reported Dubai contradiction:
+    // "Everyone is settled" under Pay These People (because that list correctly emptied)
+    // while Receive Money kept showing $643 / $95 forever, because nothing had ever
+    // actually recorded those refunds as paid. Settling "all" has to mean all of it.
+    for (const t of [...toRefund, ...toPay]) {
       await settleOne(t);
     }
     setSavedAt(Date.now());
@@ -111,6 +118,11 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 
       <Card style={{ padding: theme.space.lg, marginTop: theme.space.lg }}>
         <Text style={styles.heading}>Receive money</Text>
+        {toRefund.length > 0 && (
+          <Text style={[styles.muted, { marginBottom: theme.space.sm }]}>
+            Still sitting in the shared pool, owed back to them — not yet paid out.
+          </Text>
+        )}
         {toRefund.length === 0 ? (
           <Text style={styles.muted}>✅ Everyone is settled.</Text>
         ) : (
@@ -191,7 +203,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
       <ConfirmDialog
         visible={pendingSettleAll}
         title="Mark everyone as settled?"
-        message="This records every outstanding personal settlement as paid. Trip Bank refunds and top-ups still need to actually happen — marking them here just clears them from this list."
+        message="This records every outstanding payment and refund as complete — Trip Bank refunds, top-ups, and person-to-person payments. Only confirm once the actual money has genuinely moved; this doesn't move it for you."
         confirmLabel="Mark all settled"
         onConfirm={confirmSettleAll}
         onCancel={() => setPendingSettleAll(false)}

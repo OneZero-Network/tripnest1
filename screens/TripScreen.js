@@ -98,6 +98,7 @@ export default function TripScreen({ route, navigation }) {
       }),
     [tab]
   );
+  const latestRequestRef = useRef(tripId); // tracks the most recently STARTED loadAll() call, for the stale-response guard below
   const [travelers, setTravelers] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [timeline, setTimeline] = useState([]);
@@ -108,6 +109,20 @@ export default function TripScreen({ route, navigation }) {
   const [loadError, setLoadError] = useState(null);
 
   const loadAll = async () => {
+    // Guards against the actual root cause behind "Add Expense shows a different trip's
+    // members": an out-of-order async response, not stale UI state. Switching trips
+    // quickly (e.g. Dubai → Goa) can leave two loadAll() calls in flight at once — one
+    // for Dubai, one for Goa. Nothing previously stopped the Dubai response, if it
+    // happened to resolve SECOND, from overwriting the correct Goa data that had already
+    // rendered. latestRequestRef persists across renders (unlike a local variable, which
+    // would just compare a closure to itself and never catch anything) — each call
+    // records itself as "the latest request" when it STARTS, and before writing any
+    // state checks whether a newer call has started since. If so, this response is
+    // stale and gets discarded instead of clobbering the right trip's data — this is
+    // what actually let a traveler who was never a member of Goa (Tariq) show up in that
+    // trip's Add Expense sheet.
+    const requestedTripId = tripId;
+    latestRequestRef.current = requestedTripId;
     try {
       const db = await getDB();
       // Expenses is back as its own fetch — the Expenses tab returned per this review's
@@ -115,12 +130,13 @@ export default function TripScreen({ route, navigation }) {
       // Activity's broader feed. Still 4 independent reads run concurrently, same reasoning
       // as before: no read here depends on another's result.
       const [travelersRows, timelineRows, expensesRows, tripData, drafts] = await Promise.all([
-        db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', tripId),
-        db.getAllAsync('SELECT * FROM timeline WHERE trip_id = ? ORDER BY created_at DESC', tripId),
-        db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at DESC', tripId),
-        computeTripData(tripId),
-        getDrafts(tripId),
+        db.getAllAsync('SELECT * FROM travelers WHERE trip_id = ?', requestedTripId),
+        db.getAllAsync('SELECT * FROM timeline WHERE trip_id = ? ORDER BY created_at DESC', requestedTripId),
+        db.getAllAsync('SELECT * FROM expenses WHERE trip_id = ? ORDER BY created_at DESC', requestedTripId),
+        computeTripData(requestedTripId),
+        getDrafts(requestedTripId),
       ]);
+      if (latestRequestRef.current !== requestedTripId) return; // a newer load has started since — drop this stale one
       setTravelers(travelersRows);
       setTimeline(timelineRows);
       setExpenses(expensesRows);
@@ -129,6 +145,7 @@ export default function TripScreen({ route, navigation }) {
       setDraftCount(drafts.length);
       setLoadError(null);
     } catch (err) {
+      if (latestRequestRef.current !== requestedTripId) return;
       // A failure here used to mean a silently blank screen — the tabs would just never
       // populate, with nothing telling the organizer why. Now it's an explicit state with
       // a retry, distinct from "this trip genuinely has no expenses yet."

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addExpense, addContribution, recordSettlement, computeSettlement,
   computeBankSettlement, computeFinalBankSettlement, closeTrip, reopenTrip, getDB,
+  recordBankSettlementLeg,
 } from '../db.js';
 import { createTrip } from '../test-utils/helpers.js';
 
@@ -105,6 +106,53 @@ describe('Settlement — Trip Bank (person ↔ pool)', () => {
     assert.equal(bank.transactions.length, 0); // equal contribution, equal bank share
     assert.equal(personal.balances['B'], 100); // B paid 200 personal, owes 100 → net +100
     assert.equal(personal.balances['A'], -100);
+  });
+});
+
+describe('Settlement — "Mark all as settled" must clear BOTH refunds and payments (Dubai bug regression)', () => {
+  test('recording every bank leg — refunds AND top-ups — actually zeroes out the bank settlement, not just the ones owed TO the bank', async () => {
+    // Reproduces the reported Dubai shape: over-contributors are owed refunds FROM the
+    // bank ("Receive money"), under-contributors owe the bank ("Pay these people").
+    // The bug was that "Mark all as settled" only ever recorded the second kind — so
+    // refunds sat there forever even after the button said everything was settled.
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Tariq', 'Sam'] });
+    await addContribution(tripId, 'Ayaz', 900); // over-contributed relative to a 300 share
+    await addContribution(tripId, 'Tariq', 150); // under-contributed
+    await addContribution(tripId, 'Sam', 150); // under-contributed
+    await addExpense(tripId, 'Ayaz', 900, 'Villa', { fundingSource: 'bank' }); // 300 each share
+
+    const before = await computeBankSettlement(tripId);
+    const toRefund = before.transactions.filter((t) => t.from === 'Trip Bank');
+    const toPay = before.transactions.filter((t) => t.to === 'Trip Bank');
+    assert.ok(toRefund.length > 0, 'test setup should produce at least one refund owed');
+    assert.ok(toPay.length > 0, 'test setup should produce at least one top-up owed');
+
+    // This is what the FIXED "Mark all as settled" does: record every leg from BOTH
+    // lists, not just toPay.
+    for (const t of [...toRefund, ...toPay]) {
+      await recordBankSettlementLeg(tripId, t.from, t.to, t.amount, 'Trip Bank');
+    }
+
+    const after = await computeBankSettlement(tripId);
+    assert.equal(after.transactions.length, 0, 'refunds must actually clear, not just top-ups');
+  });
+
+  test('recording ONLY toPay (the pre-fix buggy behavior) leaves refunds stuck — documents the exact bug', async () => {
+    const tripId = await createTrip({ travelers: ['Ayaz', 'Tariq', 'Sam'] });
+    await addContribution(tripId, 'Ayaz', 900);
+    await addContribution(tripId, 'Tariq', 150);
+    await addContribution(tripId, 'Sam', 150);
+    await addExpense(tripId, 'Ayaz', 900, 'Villa', { fundingSource: 'bank' });
+
+    const before = await computeBankSettlement(tripId);
+    const toPayOnly = before.transactions.filter((t) => t.to === 'Trip Bank');
+    for (const t of toPayOnly) {
+      await recordBankSettlementLeg(tripId, t.from, t.to, t.amount, 'Trip Bank');
+    }
+
+    const after = await computeBankSettlement(tripId);
+    // This is the bug as reported: "toPay" side clears, but a refund is still outstanding.
+    assert.ok(after.transactions.some((t) => t.from === 'Trip Bank'), 'this reproduces the reported bug — refund still stuck after settling only toPay');
   });
 });
 

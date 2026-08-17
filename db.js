@@ -601,6 +601,25 @@ export async function addExpense(tripId, paidBy, amount, description, opts = {})
   const category = opts.category || null;
   const fundingSource = opts.fundingSource === 'bank' ? 'bank' : 'personal';
 
+  // Member isolation enforced here, at the data layer — not just in the UI. A stale
+  // screen, a bug in whatever built the participant list, or a directly-scripted call
+  // could all otherwise save an expense against someone who was never actually a member
+  // of THIS trip, silently corrupting the ledger (their "share" would be real money no
+  // one can ever actually collect, since they have no balance in this trip to begin
+  // with). paidBy AND every participant name are checked against this trip's actual
+  // travelers table before a single row is written — reject, don't just warn.
+  const memberRows = await db.getAllAsync('SELECT name FROM travelers WHERE trip_id = ?', tripId);
+  const memberNames = new Set(memberRows.map((r) => r.name));
+  if (!memberNames.has(paidBy)) {
+    throw new Error(`"${paidBy}" is not a member of this trip — cannot save an expense paid by them.`);
+  }
+  if (opts.participants) {
+    const nonMembers = opts.participants.filter((name) => !memberNames.has(name));
+    if (nonMembers.length > 0) {
+      throw new Error(`${nonMembers.join(', ')} ${nonMembers.length === 1 ? 'is' : 'are'} not a member of this trip and cannot be included in the split.`);
+    }
+  }
+
   // Validate the split BEFORE writing anything — an expense whose split doesn't
   // reconcile must never reach the database, per the "validate before save" requirement.
   // Only runs when a specific method/participant list was actually requested; omitting
@@ -652,6 +671,24 @@ export async function updateExpense(tripId, expenseId, changes) {
   const db = await getDB();
   const existing = await db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', expenseId);
   if (!existing) return { ok: false, reason: 'not_found' };
+
+  // Same member-isolation check as addExpense, checked BEFORE any row (including the
+  // history snapshot) is written — an edit that reassigns the payer or adds a
+  // participant who isn't actually on this trip is rejected outright, not saved and
+  // fixed later.
+  if (changes.paidBy !== undefined || changes.participants !== undefined) {
+    const memberRows = await db.getAllAsync('SELECT name FROM travelers WHERE trip_id = ?', tripId);
+    const memberNames = new Set(memberRows.map((r) => r.name));
+    if (changes.paidBy !== undefined && !memberNames.has(changes.paidBy)) {
+      return { ok: false, reason: 'invalid_member', error: `"${changes.paidBy}" is not a member of this trip.` };
+    }
+    if (changes.participants) {
+      const nonMembers = changes.participants.filter((name) => !memberNames.has(name));
+      if (nonMembers.length > 0) {
+        return { ok: false, reason: 'invalid_member', error: `${nonMembers.join(', ')} ${nonMembers.length === 1 ? 'is' : 'are'} not a member of this trip.` };
+      }
+    }
+  }
 
   const historyId = String(Date.now()) + Math.random().toString(36).slice(2);
   await db.runAsync(
