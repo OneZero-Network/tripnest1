@@ -104,6 +104,14 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
         <Card style={{ padding: theme.space.lg, marginTop: theme.space.lg }}>
           <Text style={styles.heading}>✅ No settlement required</Text>
           <Text style={styles.muted}>It's just you on this trip — there's no one to split costs with.</Text>
+          {finance.tripStatus === 'active' && (
+            <PrimaryButton
+              label="Finish Trip"
+              icon="check-circle"
+              onPress={() => setPendingFinish(true)}
+              style={{ marginTop: theme.space.md }}
+            />
+          )}
         </Card>
       ) : (
       <>

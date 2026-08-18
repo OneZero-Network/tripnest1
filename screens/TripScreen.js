@@ -225,6 +225,14 @@ export default function TripScreen({ route, navigation }) {
             <TouchableOpacity style={styles.iconBtn} onPress={() => setSafeMode(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Open Safe Mode" accessibilityRole="button">
               <Feather name="shield" size={18} color={theme.danger} />
             </TouchableOpacity>
+            {/* Rename/Delete were previously only reachable by tapping the plain trip
+                title text — no visible affordance at all, which is exactly why it read
+                as "no delete option exists." This icon is the discoverable entry point;
+                it opens the same rename sheet (with Delete under Danger Zone) as tapping
+                the title still does. */}
+            <TouchableOpacity style={styles.iconBtn} onPress={() => { setTripNameDraft(currentTripName); setRenamingTrip(true); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Trip settings" accessibilityRole="button">
+              <Feather name="more-vertical" size={18} color={theme.inkSoft} />
+            </TouchableOpacity>
           </View>
         </View>
 

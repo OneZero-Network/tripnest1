@@ -125,15 +125,17 @@ export default function CreateTripScreen({ navigation }) {
   return (
     <KeyboardAvoidingView
       style={[styles.safe, { paddingTop: insets.top + 16 }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      // Android was previously passed `behavior={undefined}`, which makes
-      // KeyboardAvoidingView a no-op — the keyboard simply overlaps whatever it covers
-      // instead of the view shrinking to make room. On this screen that meant the
-      // Shared Money section and the Create button underneath it, which is exactly
-      // the "keyboard takes over the screen" report. `insets.top` is already added to
-      // paddingTop above and would otherwise double-count against the keyboard offset,
-      // so it's subtracted back out here.
-      keyboardVerticalOffset={Platform.OS === 'android' ? -insets.top : 0}
+      // Android: app.json sets softwareKeyboardLayoutMode: 'resize', and this is a
+      // regular full screen (not a Modal/Dialog) — unlike BottomSheet's Modal, THIS
+      // screen genuinely does inherit that OS-level resize from the Activity window.
+      // Also applying KeyboardAvoidingView's own 'height' resize on top of that shrinks
+      // available space by the keyboard's height TWICE, which is what pushed the
+      // "Create Trip" button (and the traveler/contribution fields above it) down past
+      // the visible screen — the exact "keyboard takes over, can't see what's pending"
+      // report. undefined on Android lets the OS-level resize (which already works) be
+      // the only thing that happens; iOS has no equivalent OS behavior, so it still
+      // needs KeyboardAvoidingView to do the work itself via 'padding'.
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -144,7 +146,7 @@ export default function CreateTripScreen({ navigation }) {
       </View>
 
       <View style={styles.body}>
-        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>        <Text style={styles.label}>Trip Name</Text>
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: theme.space.xxl }}>        <Text style={styles.label}>Trip Name</Text>
         <TextInput
           style={[styles.nameInput, nameError && styles.inputError]}
           placeholder="e.g. Goa Trip"
