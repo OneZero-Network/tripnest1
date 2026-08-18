@@ -1172,7 +1172,7 @@ export async function getLifetimeInsights() {
     spendByCurrencyMap[currency].total += spent;
     spendByCurrencyMap[currency].tripCount += 1;
     if (spent > 0 && (!topTrip || spent > topTrip.amount)) {
-      topTrip = { name: trip.name, amount: spent, currency };
+      topTrip = { id: trip.id, name: trip.name, amount: spent, currency };
     }
   }
   // Round here, same reasoning as computeFinance's round2 — repeated float addition

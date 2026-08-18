@@ -91,7 +91,7 @@ export default function TimelineTab({ timeline, baseCurrency = 'INR', onOpenItem
                           <Text style={styles.diaryEmoji}>{CATEGORY_EMOJI[meta.category] || '🧾'}</Text>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.diaryTitle}>{meta.category}</Text>
-                            <Text style={styles.diarySub}>{meta.paidBy} paid {cs}{formatMoney(meta.amount)}{meta.currency !== baseCurrency ? ` ${meta.currency}` : ''}{meta.fundingSource === 'bank' ? ' · Trip Bank' : meta.fundingSource === 'personal' ? ' · Personal' : ''}</Text>
+                            <Text style={styles.diarySub}>{meta.paidBy} paid {currencySymbol(meta.currency || baseCurrency)}{formatMoney(meta.amount)}{meta.currency !== baseCurrency ? ` ${meta.currency}` : ''}{meta.fundingSource === 'bank' ? ' · Trip Bank' : meta.fundingSource === 'personal' ? ' · Personal' : ''}</Text>
                           </View>
                           <Text style={styles.diaryTime}>{blockTime}</Text>
                         </Row>

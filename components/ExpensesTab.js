@@ -46,7 +46,7 @@ export default function ExpensesTab({ expenses, baseCurrency, onOpenItem }) {
                     Paid by {item.paid_by}{item.description ? ` · ${item.description}` : ''} · {item.funding_source === 'bank' ? 'Trip Bank' : 'Personal'}
                   </Text>
                 </View>
-                <Text style={styles.rowAmount}>{cs}{formatMoney(item.amount)}{item.currency !== baseCurrency ? ` ${item.currency}` : ''}</Text>
+                <Text style={styles.rowAmount}>{currencySymbol(item.currency || baseCurrency)}{formatMoney(item.amount)}{item.currency !== baseCurrency ? ` ${item.currency}` : ''}</Text>
               </View>
             </LedgerRow>
           ))}

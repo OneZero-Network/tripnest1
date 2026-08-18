@@ -110,7 +110,7 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
           <View style={styles.poolHeaderRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.poolLabel}>TRIP BANK</Text>
-              <Text style={styles.poolValue}>{cs}{(finance?.totalReceived || 0).toFixed(0)}</Text>
+              <Text style={styles.poolValue}>{cs}{(finance?.currentCash ?? 0).toFixed(0)}</Text>
               <Text style={styles.poolSub}>Contributed by {travelers.length} member{travelers.length === 1 ? '' : 's'}</Text>
             </View>
             <TouchableOpacity onPress={() => setSettingsOpen(true)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Trip Bank settings" accessibilityRole="button">

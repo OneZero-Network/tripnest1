@@ -207,7 +207,7 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
           <>
             <Text style={styles(theme).title}>{record.category || 'Expense'}</Text>
             <DetailRow theme={theme} label="Paid by" value={record.paid_by} />
-            <DetailRow theme={theme} label="Amount" value={`${cs}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
+            <DetailRow theme={theme} label="Amount" value={`${currencySymbol(record.currency || baseCurrency)}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
             <DetailRow theme={theme} label="Paid from" value={record.funding_source === 'bank' ? 'Trip Bank' : 'Personal'} />
             {splits.length > 0 && (
               <DetailRow theme={theme} label="Split between" value={`${splits.map((s) => s.traveler_name).join(', ')} (${cs}${splits[0].share_amount} each)`} />
@@ -365,7 +365,7 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
           <>
             <Text style={styles(theme).title}>Contribution</Text>
             <DetailRow theme={theme} label="From" value={record.traveler} />
-            <DetailRow theme={theme} label="Amount" value={`${cs}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
+            <DetailRow theme={theme} label="Amount" value={`${currencySymbol(record.currency || baseCurrency)}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
             <DetailRow theme={theme} label="Date" value={new Date(record.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} />
             {record.edited_at ? (
               <Text style={[styles(theme).muted, { marginTop: theme.space.xs, fontStyle: 'italic' }]}>

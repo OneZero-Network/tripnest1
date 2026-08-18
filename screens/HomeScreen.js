@@ -245,31 +245,42 @@ export default function HomeScreen({ navigation }) {
                     covers "you have nothing yet." */}
                 {lifetime && lifetime.totalTripCount > 0 && (
                   <View style={styles.lifetimeStatsRow}>
-                    <View style={styles.lifetimeStatCard}>
+                    {/* Trip count / people / spend-per-currency don't each have their own
+                        detail screen, so all three route to the same sensible place: the
+                        full Trips list — "show me" rather than a dead-end tap. The
+                        biggest-trip card below is the one that CAN go somewhere more
+                        specific (that exact trip), and does. */}
+                    <TouchableOpacity style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
                       <Text style={styles.lifetimeStatValue}>{lifetime.totalTripCount}</Text>
                       <Text style={styles.lifetimeStatLabel}>{lifetime.totalTripCount === 1 ? 'Trip' : 'Trips'}</Text>
-                    </View>
-                    <View style={styles.lifetimeStatCard}>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
                       <Text style={styles.lifetimeStatValue}>{lifetime.totalUniqueTravelers}</Text>
                       <Text style={styles.lifetimeStatLabel}>{lifetime.totalUniqueTravelers === 1 ? 'Person' : 'People'}</Text>
-                    </View>
+                    </TouchableOpacity>
                     {lifetime.spendByCurrency.slice(0, 2).map((s) => (
-                      <View key={s.currency} style={styles.lifetimeStatCard}>
+                      <TouchableOpacity key={s.currency} style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
                         <Text style={styles.lifetimeStatValue} numberOfLines={1} adjustsFontSizeToFit>
                           {currencySymbol(s.currency)}{Math.round(s.total).toLocaleString()}
                         </Text>
                         <Text style={styles.lifetimeStatLabel}>Spent{lifetime.spendByCurrency.length > 1 ? ` (${s.currency})` : ''}</Text>
-                      </View>
+                      </TouchableOpacity>
                     ))}
                   </View>
                 )}
                 {lifetime?.topTrip && (
-                  <View style={styles.topTripCard}>
+                  <TouchableOpacity
+                    style={styles.topTripCard}
+                    onPress={() => navigation.navigate('Trip', { tripId: lifetime.topTrip.id, tripName: lifetime.topTrip.name })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${lifetime.topTrip.name}`}
+                  >
                     <Feather name="award" size={16} color={theme.brandDeep} />
                     <Text style={styles.topTripText}>
                       Biggest trip so far: <Text style={{ fontWeight: theme.weight.semibold }}>{lifetime.topTrip.name}</Text> — {currencySymbol(lifetime.topTrip.currency)}{Math.round(lifetime.topTrip.amount).toLocaleString()}
                     </Text>
-                  </View>
+                    <Feather name="chevron-right" size={16} color={theme.inkMute} />
+                  </TouchableOpacity>
                 )}
 
                 {/* Real insights, not fabricated ones — only appears once a place has

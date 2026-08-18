@@ -1,5 +1,5 @@
 import React, {useState, useMemo, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, findNodeHandle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { getDB, logTimelineEvent } from '../db';
@@ -17,17 +17,22 @@ export default function CreateTripScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef(null);
-  // On Android especially, a plain ScrollView never auto-scrolls to keep a focused input
-  // (or what's below it) visible once the keyboard opens — the OS-level resize shrinks
-  // the visible area, but nothing then scrolls the content up to compensate, so whatever
-  // was below the fold (remaining fields, the Create Trip button) just silently
-  // disappears with no indication there's more to fill in. This is the actual fix for
-  // "can't tell what's still pending": scroll toward the end of the content shortly
-  // after a lower-down field gains focus, so the rest of the form and the Create button
-  // become visible above the keyboard instead of requiring the user to guess they should
-  // scroll manually.
-  const revealRestOfForm = () => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
+  // The previous approach (onFocus on a couple of specific fields + a guessed 120ms
+  // timeout, then always scrolling to the very END of the form) was wrong in two ways:
+  // it only covered fields someone remembered to wire up, and unconditionally jumping
+  // to the end would actually hide a field near the TOP (like Trip Name) the instant it
+  // was focused — the opposite of "let me see what I'm typing." This uses React
+  // Native's own purpose-built API for this exact problem — scrollResponderScrollNative
+  // HandleToKeyboard, the same mechanism KeyboardAvoidingView itself uses — which scrolls
+  // just enough to bring the SPECIFIC focused field above the keyboard, regardless of
+  // whether that field is near the top or the bottom of the form. Attached to every
+  // text input on this screen, not just a couple of them.
+  const scrollFocusedIntoView = (e) => {
+    const responder = scrollRef.current?.getScrollResponder?.();
+    const handle = findNodeHandle(e.target);
+    if (responder && handle) {
+      responder.scrollResponderScrollNativeHandleToKeyboard(handle, 100, true);
+    }
   };
   const [name, setName] = useState('');
   const [travelerInput, setTravelerInput] = useState('');
@@ -166,6 +171,7 @@ export default function CreateTripScreen({ navigation }) {
           placeholderTextColor={theme.inkMute}
           value={name}
           onChangeText={(t) => { setName(t); if (nameError) setNameError(false); }}
+          onFocus={scrollFocusedIntoView}
           autoFocus
         />
         {nameError && <Text style={styles.errorText}>Trip name required</Text>}
@@ -206,6 +212,7 @@ export default function CreateTripScreen({ navigation }) {
                 keyboardType="numeric"
                 value={exFrom}
                 onChangeText={setExFrom}
+                onFocus={scrollFocusedIntoView}
               />
               <Feather name="arrow-right" size={16} color={theme.inkMute} style={{ marginHorizontal: 8 }} />
               <TextInput
@@ -215,6 +222,7 @@ export default function CreateTripScreen({ navigation }) {
                 keyboardType="numeric"
                 value={exTo}
                 onChangeText={setExTo}
+                onFocus={scrollFocusedIntoView}
               />
               <TouchableOpacity
                 style={styles.addBtn}
@@ -253,7 +261,7 @@ export default function CreateTripScreen({ navigation }) {
             value={travelerInput}
             onChangeText={setTravelerInput}
             onSubmitEditing={addTraveler}
-            onFocus={revealRestOfForm}
+            onFocus={scrollFocusedIntoView}
             returnKeyType="done"
           />
           <TouchableOpacity style={styles.addBtn} onPress={addTraveler}>
@@ -311,7 +319,7 @@ export default function CreateTripScreen({ navigation }) {
                         setContributionAmounts((prev) => ({ ...prev, [t]: v }));
                         if (contributionErrors[t]) setContributionErrors((prev) => ({ ...prev, [t]: false }));
                       }}
-                      onFocus={revealRestOfForm}
+                      onFocus={scrollFocusedIntoView}
                     />
                   </View>
                 ))}

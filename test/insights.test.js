@@ -41,6 +41,7 @@ describe('getLifetimeInsights (Overview summary cards)', () => {
 
     assert.equal(insights.topTrip.name, 'Goa');
     assert.equal(insights.topTrip.amount, 1500);
+    assert.equal(insights.topTrip.id, goa); // navigable — the id must be the real trip id, not just display text
   });
 
   test('a trip with zero expenses is still counted, just contributes 0 to its currency bucket', async () => {
