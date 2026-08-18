@@ -241,6 +241,22 @@ const MIGRATIONS = [
     // engineering it from a rounded rupee amount.
     sql: `ALTER TABLE expense_splits ADD COLUMN input_value REAL;`,
   },
+  {
+    name: '031_add_category_budgets',
+    // Per-trip, per-category spending limits ("₹5,000 for Food") — a real feature
+    // request (proactive overspend warnings), not just a display toggle, so it gets its
+    // own table rather than piggybacking on an existing one. One row per (trip,
+    // category) pair; UNIQUE prevents silently accumulating duplicate budgets for the
+    // same category if the same one is set twice.
+    sql: `CREATE TABLE IF NOT EXISTS category_budgets (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      amount REAL NOT NULL,
+      created_at INTEGER,
+      UNIQUE(trip_id, category)
+    );`,
+  },
 ];
 
 export async function getDB() {
@@ -879,6 +895,67 @@ export async function getDocumentById(id) {
 export async function getExpenseById(id) {
   const db = await getDB();
   return db.getFirstAsync('SELECT * FROM expenses WHERE id = ?', id);
+}
+
+// ---- Category budgets ----
+// Same rounding rule as finance/calculator.js's round2 (defined separately here rather
+// than imported, to avoid a circular import — calculator.js already imports FROM db.js).
+function round2(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+// Deliberately per-trip, not global — a ₹5,000 Food budget makes sense for one trip and
+// not another. amount <= 0 deletes the budget rather than storing a meaningless
+// zero/negative limit, so "clear the budget" and "set it to 0" are the same action
+// (there's no real difference between them from the user's point of view — both mean
+// "don't warn me about this category").
+export async function setCategoryBudget(tripId, category, amount) {
+  const db = await getDB();
+  if (!amount || amount <= 0) {
+    await db.runAsync('DELETE FROM category_budgets WHERE trip_id = ? AND category = ?', tripId, category);
+    return { ok: true, cleared: true };
+  }
+  const existing = await db.getFirstAsync('SELECT id FROM category_budgets WHERE trip_id = ? AND category = ?', tripId, category);
+  if (existing) {
+    await db.runAsync('UPDATE category_budgets SET amount = ? WHERE id = ?', amount, existing.id);
+  } else {
+    const id = String(Date.now()) + Math.random().toString(36).slice(2);
+    await db.runAsync('INSERT INTO category_budgets (id, trip_id, category, amount, created_at) VALUES (?, ?, ?, ?, ?)', id, tripId, category, amount, Date.now());
+  }
+  return { ok: true };
+}
+
+export async function getCategoryBudgets(tripId) {
+  const db = await getDB();
+  return db.getAllAsync('SELECT category, amount FROM category_budgets WHERE trip_id = ? ORDER BY category ASC', tripId);
+}
+
+// Joins budgets against actual category spend (from expenses.amount * fx_rate, same
+// base-currency conversion every other total in this app uses) so the caller gets one
+// ready-to-render list: every category that has EITHER a budget OR any spend at all,
+// each with spent/budget/remaining/isOver — no client-side re-joining of two separate
+// queries needed.
+export async function getCategoryBudgetStatus(tripId) {
+  const db = await getDB();
+  const budgets = await getCategoryBudgets(tripId);
+  const spendRows = await db.getAllAsync(
+    "SELECT category, COALESCE(SUM(amount * fx_rate), 0) as total FROM expenses WHERE trip_id = ? AND category IS NOT NULL GROUP BY category",
+    tripId
+  );
+  const spendByCategory = {};
+  spendRows.forEach((r) => { spendByCategory[r.category] = round2(r.total); });
+
+  const categories = new Set([...budgets.map((b) => b.category), ...Object.keys(spendByCategory)]);
+  return Array.from(categories).sort().map((category) => {
+    const budget = budgets.find((b) => b.category === category)?.amount ?? null;
+    const spent = spendByCategory[category] || 0;
+    return {
+      category,
+      spent,
+      budget,
+      remaining: budget != null ? round2(budget - spent) : null,
+      isOver: budget != null && spent > budget,
+    };
+  });
 }
 
 export async function getContributionById(id) {

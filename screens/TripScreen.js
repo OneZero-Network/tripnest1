@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, PanResponder, LayoutAnimation, Platform, UIManager, TextInput, BackHandler } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 // See HomeScreen.js for why this comes from safe-area-context, not react-native core.
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -175,7 +175,7 @@ export default function TripScreen({ route, navigation }) {
     setPendingDeleteTrip(false);
     if (result.ok) {
       setRenamingTrip(false);
-      navigation.canGoBack() ? navigation.goBack() : navigation.replace('Home');
+      navigation.canGoBack() ? navigation.navigate('Home', { homeTab: 'overview' }) : navigation.replace('Home', { homeTab: 'overview' });
     }
   };
 
@@ -186,12 +186,31 @@ export default function TripScreen({ route, navigation }) {
     if (openSafeMode) setSafeMode(true);
   }, [openSafeMode]);
 
+  // The on-screen back arrow already has a fallback for "nothing to go back to"
+  // (navigation.replace('Home')) — but Android's hardware/gesture back button doesn't go
+  // through that code at all, it's handled by React Navigation's default stack behavior,
+  // which lets the press fall through to the OS (exiting the app) when there's nothing
+  // left to pop. That's exactly what happens whenever this trip is the root of the
+  // stack — which it genuinely is on a fresh launch straight into an active trip
+  // (SplashScreen uses navigation.replace('Trip', ...), not push, specifically so
+  // there's no Home screen sitting uselessly behind it — so canGoBack() here is
+  // correctly false, and without this listener the very first hardware back press would
+  // exit the app instead of surfacing Home.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (navigation.canGoBack()) return false; // let the default stack behavior handle it
+      navigation.replace('Home', { homeTab: 'overview' });
+      return true; // we handled it — don't let it fall through to exiting the app
+    });
+    return () => sub.remove();
+  }, [navigation]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
         <View style={styles.headerRow}>
           <TouchableOpacity
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.replace('Home'))}
+            onPress={() => (navigation.canGoBack() ? navigation.navigate('Home', { homeTab: 'overview' }) : navigation.replace('Home', { homeTab: 'overview' }))}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={styles.backBtn}
             accessibilityLabel="Back"
@@ -283,10 +302,10 @@ export default function TripScreen({ route, navigation }) {
                 <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} tripStatus={finance.tripStatus} pendingDraftsCount={draftCount} baseCurrency={finance.baseCurrency} onChanged={loadAll} />
 
                 {tab === 'Members' && <TravelersTab tripId={tripId} travelers={travelers} expenses={expenses} finance={finance} onChanged={loadAll} />}
-                {tab === 'Expenses' && <ExpensesTab expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
+                {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Activity' && <TimelineTab timeline={timeline} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} expenses={expenses} tripName={currentTripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} onOpenExpenses={() => changeTab('Expenses')} />}
-                {tab === 'Settle' && <SettlementTab tripId={tripId} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
+                {tab === 'Settle' && <SettlementTab tripId={tripId} tripName={currentTripName} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
               </>
             )}
           </Container>

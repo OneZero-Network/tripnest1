@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Share } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { recordSettlement, recordBankSettlementLeg, closeTrip } from '../db';
-import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, SuccessToast, currencySymbol, formatMoney, useTheme } from './UI';
+import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, SecondaryButton, ConfirmDialog, SuccessToast, currencySymbol, formatMoney, useTheme } from './UI';
 
 // SIMPLIFIED SETTLEMENT: the founder's own words — "Users shouldn't learn accounting to
 // split trip expenses." This screen deliberately does NOT show balances, doesn't say
@@ -14,7 +14,7 @@ import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, Su
 //   "Pay these people" (was "People who need to pay") — money a traveler owes, whether that's topping up the bank
 //                              or paying another traveler back directly. The user doesn't
 //                              need to know which; the underlying transaction already does.
-export default function SettlementTab({ tripId, finance, navigation, onOpenAdvanced, onChanged }) {
+export default function SettlementTab({ tripId, tripName, finance, navigation, onOpenAdvanced, onChanged }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [pendingSettle, setPendingSettle] = useState(null); // {from, to, amount}
@@ -41,7 +41,6 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
   ];
 
   const settleOne = async (t) => {
-    // A refund FROM the Trip Bank, or a top-up TO the Trip Bank, isn't a traveler-to-
     // Bank legs (top-up or refund) are now recorded as real contribution rows via
     // recordBankSettlementLeg, so this fixes the "still says pending after everyone's
     // paid" bug — the bank balance actually nets to zero afterward instead of being
@@ -51,6 +50,40 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
       await recordSettlement(tripId, t.from, t.to, t.amount);
     } else {
       await recordBankSettlementLeg(tripId, t.from, t.to, t.amount, bankName);
+    }
+  };
+
+  // Closes the loop without needing a payment integration: most groups still settle by
+  // someone reading numbers off this screen and typing them into a chat by hand. This
+  // builds that message for them — plain text, WhatsApp-ready, no accounting jargon
+  // (matches this screen's own "Receive money / Pay these people" framing, not the
+  // underlying Trip Bank/personal split). Uses whatever's CURRENTLY outstanding, same
+  // data the screen itself is showing — never a stale or hypothetical summary.
+  const buildShareText = () => {
+    const lines = [`💰 ${tripName ? `${tripName} — ` : ''}Settlement summary`, ''];
+    if (toRefund.length === 0 && toPay.length === 0) {
+      lines.push('✅ Everyone is settled up — nothing outstanding.');
+    } else {
+      if (toRefund.length > 0) {
+        lines.push('Owed back from the shared pool:');
+        toRefund.forEach((t) => lines.push(`  • ${t.to} — ${cs}${formatMoney(t.amount)}`));
+        lines.push('');
+      }
+      if (toPay.length > 0) {
+        lines.push('Still needs to be paid:');
+        toPay.forEach((t) => lines.push(`  • ${t.from} → ${t.to} — ${cs}${formatMoney(t.amount)}`));
+      }
+    }
+    lines.push('', 'Tracked with TripNest');
+    return lines.join('\n');
+  };
+
+  const shareSettlement = async () => {
+    try {
+      await Share.share({ message: buildShareText() });
+    } catch {
+      // Share sheet dismissed/cancelled — nothing to recover from, nothing to show an
+      // error for either; this isn't a failure state, just the user changing their mind.
     }
   };
 
@@ -85,14 +118,24 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 
       <View style={styles.pageHeaderRow}>
         <Text style={styles.pageTitle}>Settlement</Text>
-        <TouchableOpacity
-          onPress={() => navigation?.navigate('HowItWorks')}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          accessibilityLabel="How settlement works"
-          accessibilityRole="button"
-        >
-          <Feather name="info" size={18} color={theme.inkMute} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: theme.space.md }}>
+          <TouchableOpacity
+            onPress={shareSettlement}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Share settlement summary"
+            accessibilityRole="button"
+          >
+            <Feather name="share-2" size={18} color={theme.inkMute} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation?.navigate('HowItWorks')}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="How settlement works"
+            accessibilityRole="button"
+          >
+            <Feather name="info" size={18} color={theme.inkMute} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <StatHero
