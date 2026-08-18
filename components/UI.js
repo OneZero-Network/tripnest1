@@ -13,6 +13,17 @@ export function currencySymbol(code) {
   return CURRENCY_SYMBOLS[code] || `${code} `;
 }
 
+// Every money figure in the app should render with exactly 2 decimal places — never a
+// bare integer ("₹115"), never raw floating-point noise ("₹0.00999999999999990905" — a
+// real bug: an unrounded value from computeFinance reaching the screen unformatted).
+// This is the one place that formatting happens; call sites pass a number, get a clean
+// 2-decimal string back, regardless of whether the underlying number was already clean.
+export function formatMoney(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '0.00';
+  return n.toFixed(2);
+}
+
 // ---- Tablet support: layouts stay correct (flex-based, nothing hardcoded to phone
 // width) at any size already — what tablets actually need on top of that is a content
 // width cap, because a single-column phone layout stretched edge-to-edge across a 10"

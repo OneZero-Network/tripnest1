@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { recordSettlement, recordBankSettlementLeg, closeTrip } from '../db';
-import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, SuccessToast, currencySymbol, useTheme } from './UI';
+import { StatHero, Card, LedgerList, LedgerRow, PrimaryButton, ConfirmDialog, SuccessToast, currencySymbol, formatMoney, useTheme } from './UI';
 
 // SIMPLIFIED SETTLEMENT: the founder's own words — "Users shouldn't learn accounting to
 // split trip expenses." This screen deliberately does NOT show balances, doesn't say
@@ -97,7 +97,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
 
       <StatHero
         label="Shared cash remaining"
-        value={`${cs}${finance.currentCash}`}
+        value={`${cs}${formatMoney(finance.currentCash)}`}
       />
 
       {finance.travelerCount === 1 ? (
@@ -119,7 +119,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
         <View style={styles.warningBanner}>
           <Feather name="alert-triangle" size={14} color={theme.warn} />
           <Text style={styles.warningText}>
-            {finance.liveForecast.orphanedPayers.map(o => `${o.name} paid ${cs}${o.amount}`).join(', ')} — not a current traveler on this trip, so that money isn't reflected in anyone's balance. Add them as a traveler, or fix the payer on that expense.
+            {finance.liveForecast.orphanedPayers.map(o => `${o.name} paid ${cs}${formatMoney(o.amount)}`).join(', ')} — not a current traveler on this trip, so that money isn't reflected in anyone's balance. Add them as a traveler, or fix the payer on that expense.
           </Text>
         </View>
       )}
@@ -138,7 +138,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
             {toRefund.map((t, i) => (
               <LedgerRow key={i} icon="refund" isLast={i === toRefund.length - 1}>
                 <Text style={styles.line}>Return to {t.to}</Text>
-                <Text style={styles.amount}>{cs}{t.amount}</Text>
+                <Text style={styles.amount}>{cs}{formatMoney(t.amount)}</Text>
               </LedgerRow>
             ))}
           </LedgerList>
@@ -161,7 +161,7 @@ export default function SettlementTab({ tripId, finance, navigation, onOpenAdvan
                 onAction={() => setPendingSettle(t)}
               >
                 <Text style={styles.line}>{t.to === bankName ? `${t.from} tops up pool` : `${t.from} → ${t.to}`}</Text>
-                <Text style={styles.amount}>{cs}{t.amount}</Text>
+                <Text style={styles.amount}>{cs}{formatMoney(t.amount)}</Text>
               </LedgerRow>
             ))}
           </LedgerList>

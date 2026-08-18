@@ -1,4 +1,4 @@
-import React, {useState, useMemo } from 'react';
+import React, {useState, useMemo, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -16,6 +16,19 @@ export default function CreateTripScreen({ navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef(null);
+  // On Android especially, a plain ScrollView never auto-scrolls to keep a focused input
+  // (or what's below it) visible once the keyboard opens — the OS-level resize shrinks
+  // the visible area, but nothing then scrolls the content up to compensate, so whatever
+  // was below the fold (remaining fields, the Create Trip button) just silently
+  // disappears with no indication there's more to fill in. This is the actual fix for
+  // "can't tell what's still pending": scroll toward the end of the content shortly
+  // after a lower-down field gains focus, so the rest of the form and the Create button
+  // become visible above the keyboard instead of requiring the user to guess they should
+  // scroll manually.
+  const revealRestOfForm = () => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
+  };
   const [name, setName] = useState('');
   const [travelerInput, setTravelerInput] = useState('');
   const [travelers, setTravelers] = useState([]);
@@ -146,7 +159,7 @@ export default function CreateTripScreen({ navigation }) {
       </View>
 
       <View style={styles.body}>
-        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: theme.space.xxl }}>        <Text style={styles.label}>Trip Name</Text>
+        <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: theme.space.xxl }}>        <Text style={styles.label}>Trip Name</Text>
         <TextInput
           style={[styles.nameInput, nameError && styles.inputError]}
           placeholder="e.g. Goa Trip"
@@ -240,6 +253,7 @@ export default function CreateTripScreen({ navigation }) {
             value={travelerInput}
             onChangeText={setTravelerInput}
             onSubmitEditing={addTraveler}
+            onFocus={revealRestOfForm}
             returnKeyType="done"
           />
           <TouchableOpacity style={styles.addBtn} onPress={addTraveler}>
@@ -297,6 +311,7 @@ export default function CreateTripScreen({ navigation }) {
                         setContributionAmounts((prev) => ({ ...prev, [t]: v }));
                         if (contributionErrors[t]) setContributionErrors((prev) => ({ ...prev, [t]: false }));
                       }}
+                      onFocus={revealRestOfForm}
                     />
                   </View>
                 ))}

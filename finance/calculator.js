@@ -22,6 +22,17 @@ export async function setContributionPerPerson(tripId, amount) {
 // { rows: null, error: 'message' } on a split that doesn't reconcile — callers must check
 // `error` and refuse to save rather than silently persisting a mismatched split.
 const EPS = 0.01;
+
+// Every financial figure shown to a user must be clean to 2 decimal places — floating
+// point subtraction/summation across many contributions/expenses (e.g. totalReceived -
+// domesticBankSpent - exchangedOutBase) can otherwise produce values like
+// 0.00999999999999990905 instead of 0.01, which is exactly what reached the Settlement
+// screen. round2() is the one place that rounding happens so every numeric field
+// computeFinance returns goes through the same rule, rather than each call site
+// remembering to add its own .toFixed(2).
+function round2(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
 export function resolveSplit(baseAmount, participants, splitType, splitValues = {}) {
   const names = [...new Set(participants)];
   if (names.length === 0) return { rows: null, error: 'Select at least one participant.' };
@@ -332,12 +343,12 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   // or contribution was entered in something other than the trip's base currency —
   // SUM(amount * fx_rate) is the actual base-currency value in every case, including the
   // common one where fx_rate is just 1.
-  const totalReceived = contribRows.reduce((s, c) => s + c.amount * c.fx_rate, 0);
+  const totalReceived = round2(contribRows.reduce((s, c) => s + c.amount * c.fx_rate, 0));
   const bankSpentRow = await db.getFirstAsync("SELECT COALESCE(SUM(amount * fx_rate),0) as total FROM expenses WHERE trip_id = ? AND funding_source = 'bank'", tripId);
   const personalSpentRow = await db.getFirstAsync("SELECT COALESCE(SUM(amount * fx_rate),0) as total FROM expenses WHERE trip_id = ? AND funding_source = 'personal'", tripId);
-  const bankSpent = bankSpentRow.total;
-  const personalSpent = personalSpentRow.total;
-  const totalSpent = bankSpent + personalSpent;
+  const bankSpent = round2(bankSpentRow.total);
+  const personalSpent = round2(personalSpentRow.total);
+  const totalSpent = round2(bankSpent + personalSpent);
 
   const baseCurrency = trip?.base_currency || 'INR';
   // A currency exchange moves real cash OUT of the Trip Bank the moment it happens — the
@@ -353,7 +364,7 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
     "SELECT COALESCE(SUM(from_amount),0) as total FROM currency_exchanges WHERE trip_id = ? AND from_currency = ?",
     tripId, baseCurrency
   );
-  const exchangedOutBase = exchangedOutRow.total;
+  const exchangedOutBase = round2(exchangedOutRow.total);
 
   // Bank-tagged expenses paid in a currency the trip has exchanged into are spend AGAINST
   // that foreign wallet, not a second draw on the base-currency pool — the cash for those
@@ -369,17 +380,17 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
   const bankExpenseRows = await db.getAllAsync(
     "SELECT amount, fx_rate, currency FROM expenses WHERE trip_id = ? AND funding_source = 'bank'", tripId
   );
-  const domesticBankSpent = bankExpenseRows.reduce((s, e) => {
+  const domesticBankSpent = round2(bankExpenseRows.reduce((s, e) => {
     if (walletCurrencies.has(e.currency)) return s; // already covered by exchangedOutBase
     return s + e.amount * e.fx_rate;
-  }, 0);
+  }, 0));
 
   // "Current balance" is the Trip Bank's own cash position — contributions in, minus
   // whatever has actually left the pool: direct base-currency bank spend, plus anything
   // converted into a foreign wallet (spent or not — it left the bank either way). Personal
   // expenses don't touch it; they're a separate peer-to-peer matter, which is exactly the
   // distinction the old single-bucket model was missing.
-  const currentCash = totalReceived - domesticBankSpent - exchangedOutBase;
+  const currentCash = round2(totalReceived - domesticBankSpent - exchangedOutBase);
   const settlement = precomputedSettlement ?? await computeSettlement(tripId);
   const bankSettlement = await computeBankSettlement(tripId);
   // Only computed when actually needed — closed trips are the exception, not the common
@@ -403,12 +414,12 @@ export async function computeFinance(tripId, precomputedSettlement = null) {
       const spentByPerson = await db.getAllAsync('SELECT paid_by, COALESCE(SUM(amount),0) as total FROM expenses WHERE trip_id = ? AND currency = ? GROUP BY paid_by', tripId, c);
       const spentMap = {};
       spentByPerson.forEach((r) => { spentMap[r.paid_by] = r.total; });
-      const byPerson = convertedByPerson.map((r) => ({ converted_by: r.converted_by, total: r.total, spent: spentMap[r.converted_by] || 0, remaining: r.total - (spentMap[r.converted_by] || 0) }));
+      const byPerson = convertedByPerson.map((r) => ({ converted_by: r.converted_by, total: round2(r.total), spent: round2(spentMap[r.converted_by] || 0), remaining: round2(r.total - (spentMap[r.converted_by] || 0)) }));
       // Every individual conversion that adds up to the total above — a lumped "150 USD"
       // number with no way to see where it came from isn't trustworthy in a finance app,
       // per the exact complaint: show "100 + 50 = 150", not just "150".
       const exchangeEntries = await db.getAllAsync('SELECT to_amount FROM currency_exchanges WHERE trip_id = ? AND to_currency = ? ORDER BY created_at ASC', tripId, c);
-      foreignWallets.push({ currency: c, exchanged: exchanged.total, spent: fxSpent.total, remaining: exchanged.total - fxSpent.total, byPerson, exchangeAmounts: exchangeEntries.map((r) => r.to_amount) });
+      foreignWallets.push({ currency: c, exchanged: round2(exchanged.total), spent: round2(fxSpent.total), remaining: round2(exchanged.total - fxSpent.total), byPerson, exchangeAmounts: exchangeEntries.map((r) => round2(r.to_amount)) });
     }
   }
   // Kept for anything still reading the singular field — the trip's default currency's

@@ -137,3 +137,43 @@ describe('Currency exchange — shared cash reconciliation', () => {
     assert.equal(wallet.remaining, 40); // the $40 is still visibly accounted for, not silently dropped at closure
   });
 });
+
+describe('Currency exchange — 2-decimal precision (reported bug: ₹0.00999999999999990905)', () => {
+  test('currentCash is always exactly 2-decimal clean, never raw floating-point noise', async () => {
+    // Values deliberately chosen to accumulate floating-point error through repeated
+    // subtraction if left unrounded — this is what actually reached the Settlement
+    // screen as "₹0.00999999999999990905" in production.
+    const tripId = await createTrip({ travelers: ['A', 'B', 'C'] });
+    await addContribution(tripId, 'A', 232.67);
+    await addContribution(tripId, 'B', 322.67);
+    await addContribution(tripId, 'C', 232.67);
+    await addExpense(tripId, 'A', 50, 'Transport', { fundingSource: 'bank' });
+    await addExpense(tripId, 'A', 580, 'Stay', { fundingSource: 'personal' });
+    await addExpense(tripId, 'C', 948, 'Shopping', { fundingSource: 'bank' });
+    const finance = await computeFinance(tripId);
+    // The core assertion: round-tripping through toFixed(2) must be a no-op — if the
+    // stored value already has any floating-point noise beyond 2 decimals, this fails.
+    assert.equal(finance.currentCash, +finance.currentCash.toFixed(2));
+    assert.equal(String(finance.currentCash).length <= 12, true, `currentCash has suspicious precision: ${finance.currentCash}`);
+  });
+
+  test('every numeric field computeFinance returns is 2-decimal clean, not just currentCash', async () => {
+    const tripId = await createTrip({ tripType: 'international', foreignCurrency: 'USD', travelers: ['A', 'B'] });
+    await addContribution(tripId, 'A', 100.10);
+    await addContribution(tripId, 'B', 200.20);
+    await addCurrencyExchange(tripId, 150.15, 'INR', 5.03, 'USD', 'A');
+    await addExpense(tripId, 'A', 33.33, 'Snack', { fundingSource: 'bank' });
+    await addExpense(tripId, 'A', 1.11, 'Coffee', { currency: 'USD', fxRate: 30, fundingSource: 'bank' });
+    const finance = await computeFinance(tripId);
+    const fieldsToCheck = ['totalReceived', 'totalSpent', 'bankSpent', 'personalSpent', 'currentCash', 'exchangedOutBase'];
+    for (const field of fieldsToCheck) {
+      const v = finance[field];
+      assert.equal(v, +v.toFixed(2), `${field} is not 2-decimal clean: ${v}`);
+    }
+    for (const wallet of finance.foreignWallets) {
+      for (const key of ['exchanged', 'spent', 'remaining']) {
+        assert.equal(wallet[key], +wallet[key].toFixed(2), `foreignWallet.${key} is not 2-decimal clean: ${wallet[key]}`);
+      }
+    }
+  });
+});

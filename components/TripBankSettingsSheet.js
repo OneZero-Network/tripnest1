@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { setContributionPerPerson, setCustodian, closeTrip, reopenTrip, setTripType } from '../db';
-import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, Chip, currencySymbol, useTheme } from './UI';
+import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, Chip, currencySymbol, formatMoney, useTheme } from './UI';
 
 const COMMON_FX = ['USD', 'EUR', 'GBP', 'AED', 'THB', 'SAR', 'JPY'];
 
@@ -76,7 +76,7 @@ export default function TripBankSettingsSheet({ tripId, finance, visible, onClos
         <Text style={[styles.label, { marginTop: theme.space.lg }]}>Contribution target per person</Text>
         {finance.fundTarget != null ? (
           <Text style={styles.value}>
-            {cs}{finance.fundTarget} target ({cs}{finance.perPerson} × {finance.travelerCount}) — {fundShort > 0 ? `${cs}${fundShort} short` : 'fully funded'}
+            {cs}{formatMoney(finance.fundTarget)} target ({cs}{formatMoney(finance.perPerson)} × {finance.travelerCount}) — {fundShort > 0 ? `${cs}${formatMoney(fundShort)} short` : 'fully funded'}
           </Text>
         ) : (
           <Text style={styles.mutedValue}>Not set.</Text>

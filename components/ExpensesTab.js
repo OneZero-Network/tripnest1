@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { LedgerList, LedgerRow, EmptyState, currencySymbol, CATEGORY_EMOJI, useTheme } from './UI';
+import { LedgerList, LedgerRow, EmptyState, currencySymbol, formatMoney, CATEGORY_EMOJI, useTheme } from './UI';
 
 // EXPENSES: answers exactly one question — "what was spent" — separate from Activity's
 // broader "what happened" (which also covers notes, documents, contributions, events).
@@ -46,7 +46,7 @@ export default function ExpensesTab({ expenses, baseCurrency, onOpenItem }) {
                     Paid by {item.paid_by}{item.description ? ` · ${item.description}` : ''} · {item.funding_source === 'bank' ? 'Trip Bank' : 'Personal'}
                   </Text>
                 </View>
-                <Text style={styles.rowAmount}>{cs}{item.amount}{item.currency !== baseCurrency ? ` ${item.currency}` : ''}</Text>
+                <Text style={styles.rowAmount}>{cs}{formatMoney(item.amount)}{item.currency !== baseCurrency ? ` ${item.currency}` : ''}</Text>
               </View>
             </LedgerRow>
           ))}

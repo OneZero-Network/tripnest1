@@ -10,7 +10,7 @@ import {
   updateCurrencyExchange, deleteCurrencyExchange,
 } from '../db';
 import { openDocument, deleteDocument } from '../tripExport';
-import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, Chip, currencySymbol, CATEGORY_EMOJI, useTheme } from './UI';
+import { BottomSheet, PrimaryButton, SecondaryButton, ConfirmDialog, Chip, currencySymbol, formatMoney, CATEGORY_EMOJI, useTheme } from './UI';
 
 // Folding Expenses/Notes/Documents into Activity means a feed row needs to actually DO
 // something when tapped, not just describe what happened. This sheet is that "something" —
@@ -207,7 +207,7 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
           <>
             <Text style={styles(theme).title}>{record.category || 'Expense'}</Text>
             <DetailRow theme={theme} label="Paid by" value={record.paid_by} />
-            <DetailRow theme={theme} label="Amount" value={`${cs}${record.amount}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
+            <DetailRow theme={theme} label="Amount" value={`${cs}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
             <DetailRow theme={theme} label="Paid from" value={record.funding_source === 'bank' ? 'Trip Bank' : 'Personal'} />
             {splits.length > 0 && (
               <DetailRow theme={theme} label="Split between" value={`${splits.map((s) => s.traveler_name).join(', ')} (${cs}${splits[0].share_amount} each)`} />
@@ -365,7 +365,7 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
           <>
             <Text style={styles(theme).title}>Contribution</Text>
             <DetailRow theme={theme} label="From" value={record.traveler} />
-            <DetailRow theme={theme} label="Amount" value={`${cs}${record.amount}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
+            <DetailRow theme={theme} label="Amount" value={`${cs}${formatMoney(record.amount)}${record.currency !== baseCurrency ? ` ${record.currency}` : ''}`} />
             <DetailRow theme={theme} label="Date" value={new Date(record.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} />
             {record.edited_at ? (
               <Text style={[styles(theme).muted, { marginTop: theme.space.xs, fontStyle: 'italic' }]}>
@@ -400,8 +400,8 @@ export default function ActivityItemSheet({ tripId, event, baseCurrency, travele
         ) : event.type === 'exchange' && !editingExchange ? (
           <>
             <Text style={styles(theme).title}>Currency exchange</Text>
-            <DetailRow theme={theme} label="Given" value={`${record.from_amount} ${record.from_currency}`} />
-            <DetailRow theme={theme} label="Received" value={`${record.to_amount} ${record.to_currency}`} />
+            <DetailRow theme={theme} label="Given" value={`${formatMoney(record.from_amount)} ${record.from_currency}`} />
+            <DetailRow theme={theme} label="Received" value={`${formatMoney(record.to_amount)} ${record.to_currency}`} />
             <DetailRow theme={theme} label="Rate" value={`1 ${record.to_currency} = ${record.from_currency}${(record.from_amount / record.to_amount).toFixed(2)}`} />
             <DetailRow theme={theme} label="Date" value={new Date(record.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} />
             {record.edited_at ? (
