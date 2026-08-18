@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, PanResponder, Alert } from 'react-native';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, PanResponder } from 'react-native';
 // react-native-safe-area-context's SafeAreaView (not the react-native core one, which is
 // iOS-only and a no-op on Android — that no-op is exactly why the greeting text was
 // rendering underneath the Android status bar).
@@ -9,7 +9,7 @@ import { Feather } from '@expo/vector-icons';
 import { getDB, computeTripData, getDrafts, getDestinationInsights, getConsolidatedOverview, getNotificationFeed, getLifetimeInsights } from '../db';
 import { getTripCoverTheme } from '../tripTheme';
 import { LinearGradient } from 'expo-linear-gradient';
-import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Container, useTheme } from '../components/UI';
+import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Container, BottomSheet, useTheme } from '../components/UI';
 
 // HOOK: this is the screen the organizer opens dozens of times per trip, often one-handed,
 // often mid-conversation. The design brief calls it "the organizer's trip library," not a
@@ -34,7 +34,7 @@ const HOME_TABS = [
   { key: 'more', label: 'More', icon: 'menu' },
 ];
 
-export default function HomeScreen({ navigation }) {
+export default function HomeScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -47,6 +47,7 @@ export default function HomeScreen({ navigation }) {
   const [loadError, setLoadError] = useState(null);
   const [homeTab, setHomeTab] = useState('overview');
   const [tripsFilterCurrency, setTripsFilterCurrency] = useState(null); // set by tapping a "Spent (currency)" card — drills the Trips tab down to just that currency's trips
+  const [peopleModalOpen, setPeopleModalOpen] = useState(false);
 
   const loadTrips = async () => {
     try {
@@ -82,6 +83,17 @@ export default function HomeScreen({ navigation }) {
   };
 
   useFocusEffect(useCallback(() => { loadTrips(); }, []));
+
+  // Explicit, not inferred: TripScreen's back actions pass homeTab: 'overview' so
+  // returning from a trip always lands here regardless of which tab was active before
+  // the trip was opened (e.g. opened from the Trips list — back shouldn't leave you
+  // stuck on Trips, it should return to the actual home view). Deliberately does NOT
+  // reset on every focus — only when a screen explicitly asks for a specific tab via
+  // this param — because Notifications/More returning via the swipe-back gesture (see
+  // the PanResponder below) rely on Home staying on whatever tab it was actually left on.
+  useEffect(() => {
+    if (route?.params?.homeTab) setHomeTab(route.params.homeTab);
+  }, [route?.params?.homeTab]);
 
   const greeting = (() => {
     const h = new Date().getHours();
@@ -293,10 +305,7 @@ export default function HomeScreen({ navigation }) {
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.lifetimeStatCard}
-                      onPress={() => Alert.alert(
-                        lifetime.totalUniqueTravelers === 1 ? 'Person tracked' : 'People tracked',
-                        lifetime.travelerNames?.length ? lifetime.travelerNames.join('\n') : 'No one yet.'
-                      )}
+                      onPress={() => setPeopleModalOpen(true)}
                       accessibilityRole="button"
                       accessibilityLabel="See everyone tracked across your trips"
                     >
@@ -354,11 +363,36 @@ export default function HomeScreen({ navigation }) {
               </>
             ) : (
               <>
-                {tripsFilterCurrency && (
-                  <TouchableOpacity style={styles.filterChip} onPress={() => setTripsFilterCurrency(null)} accessibilityRole="button" accessibilityLabel="Clear currency filter">
-                    <Text style={styles.filterChipText}>{tripsFilterCurrency} trips only</Text>
-                    <Feather name="x" size={14} color={theme.brandDeep} />
-                  </TouchableOpacity>
+                {/* Always-visible currency switcher on the Trips tab, not just a
+                    "clear filter" chip — the actual bug being fixed here: previously
+                    the only way to switch from viewing INR trips to USD trips was to
+                    go back to Overview and tap a different stat card, since the cards
+                    that set the filter only exist there. Only rendered when there's
+                    more than one currency in play at all — a single-currency user
+                    should never see a filter UI for a distinction that doesn't exist
+                    for them. */}
+                {lifetime && lifetime.spendByCurrency.length > 1 && (
+                  <View style={styles.currencySwitchRow}>
+                    <TouchableOpacity
+                      style={[styles.filterChip, !tripsFilterCurrency && styles.filterChipActive]}
+                      onPress={() => setTripsFilterCurrency(null)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Show all trips"
+                    >
+                      <Text style={[styles.filterChipText, !tripsFilterCurrency && styles.filterChipTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {lifetime.spendByCurrency.map((s) => (
+                      <TouchableOpacity
+                        key={s.currency}
+                        style={[styles.filterChip, tripsFilterCurrency === s.currency && styles.filterChipActive]}
+                        onPress={() => setTripsFilterCurrency(s.currency)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Show only ${s.currency} trips`}
+                      >
+                        <Text style={[styles.filterChipText, tripsFilterCurrency === s.currency && styles.filterChipTextActive]}>{s.currency}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 )}
                 {current && currentMatchesFilter && <SectionHeader title="Current" />}
                 {current && currentMatchesFilter && (
@@ -401,9 +435,16 @@ export default function HomeScreen({ navigation }) {
       <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 6 }]}>
         {HOME_TABS.map((t) =>
           t.key === 'add' ? (
-            <TouchableOpacity key={t.key} style={styles.bottomNavFab} onPress={() => handleHomeTabPress(t.key)} accessibilityLabel="Create trip" accessibilityRole="button">
-              <Feather name="plus" size={24} color="#fff" />
-            </TouchableOpacity>
+            // Wrapped in an equal-width flex:1 slot, same as its 4 siblings below — the
+            // FAB itself previously had no flex sizing at all, sitting at a fixed 48px
+            // among flex:1 items, which is exactly what made the row's spacing uneven.
+            // The 48x48 circle stays fixed-size and centered; only its SLOT now matches
+            // the others.
+            <View key={t.key} style={styles.bottomNavFabSlot}>
+              <TouchableOpacity style={styles.bottomNavFab} onPress={() => handleHomeTabPress(t.key)} accessibilityLabel="Create trip" accessibilityRole="button">
+                <Feather name="plus" size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
           ) : (
             <TouchableOpacity key={t.key} style={styles.bottomNavItem} onPress={() => handleHomeTabPress(t.key)} accessibilityLabel={t.label} accessibilityRole="button">
               <Feather name={t.icon} size={20} color={homeTab === t.key ? theme.brandDeep : theme.inkMute} />
@@ -412,6 +453,19 @@ export default function HomeScreen({ navigation }) {
           )
         )}
       </View>
+
+      <BottomSheet visible={peopleModalOpen} onClose={() => setPeopleModalOpen(false)}>
+        <Text style={styles.peopleModalTitle}>
+          {lifetime?.totalUniqueTravelers === 1 ? 'Person tracked' : 'People tracked'}
+        </Text>
+        {lifetime?.travelerNames?.length ? (
+          lifetime.travelerNames.map((name) => (
+            <Text key={name} style={styles.peopleModalRow}>{name}</Text>
+          ))
+        ) : (
+          <Text style={styles.peopleModalRow}>No one yet.</Text>
+        )}
+      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -474,8 +528,13 @@ const makeStyles = (theme) => StyleSheet.create({
   insightTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   insightBody: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2, lineHeight: 16 },
   lifetimeStatsRow: { flexDirection: 'row', gap: theme.space.sm, marginTop: theme.space.lg },
-  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: theme.brandWash || 'rgba(14,124,134,0.12)', borderRadius: theme.radius.lg, paddingHorizontal: 12, paddingVertical: 6, marginBottom: theme.space.md },
-  filterChipText: { color: theme.brandDeep, fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
+  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, paddingHorizontal: 12, paddingVertical: 6 },
+  filterChipActive: { backgroundColor: theme.brandDeep, borderColor: theme.brandDeep },
+  filterChipText: { color: theme.inkSoft, fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
+  filterChipTextActive: { color: '#fff' },
+  currencySwitchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs, marginBottom: theme.space.md },
+  peopleModalTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.md },
+  peopleModalRow: { fontSize: theme.type.body, color: theme.ink, paddingVertical: theme.space.sm, borderBottomWidth: 1, borderBottomColor: theme.line },
   lifetimeStatCard: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, paddingVertical: theme.space.md, paddingHorizontal: theme.space.sm, alignItems: 'center' },
   lifetimeStatValue: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
   lifetimeStatLabel: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
@@ -496,6 +555,7 @@ const makeStyles = (theme) => StyleSheet.create({
   },
   bottomNavItem: { alignItems: 'center', flex: 1, minHeight: theme.a11y.minTouchTarget, gap: 2 },
   bottomNavLabel: { fontSize: 10.5, color: theme.inkMute },
+  bottomNavFabSlot: { flex: 1, alignItems: 'center' },
   bottomNavFab: {
     width: 48, height: 48, borderRadius: 24, backgroundColor: theme.brandDeep,
     alignItems: 'center', justifyContent: 'center', marginBottom: 4,

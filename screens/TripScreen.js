@@ -302,10 +302,10 @@ export default function TripScreen({ route, navigation }) {
                 <CockpitCard tripId={tripId} today={today} cashLeft={finance.currentCash} tripStatus={finance.tripStatus} pendingDraftsCount={draftCount} baseCurrency={finance.baseCurrency} onChanged={loadAll} />
 
                 {tab === 'Members' && <TravelersTab tripId={tripId} travelers={travelers} expenses={expenses} finance={finance} onChanged={loadAll} />}
-                {tab === 'Expenses' && <ExpensesTab tripId={tripId} expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
+                {tab === 'Expenses' && <ExpensesTab expenses={expenses} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Activity' && <TimelineTab timeline={timeline} baseCurrency={finance.baseCurrency} onOpenItem={setSelectedActivityEvent} />}
                 {tab === 'Overview' && <OverviewTab finance={finance} timeline={timeline} today={today} expenses={expenses} tripName={currentTripName} navigation={navigation} onOpenSettlement={() => changeTab('Settle')} onOpenExpenses={() => changeTab('Expenses')} />}
-                {tab === 'Settle' && <SettlementTab tripId={tripId} tripName={currentTripName} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
+                {tab === 'Settle' && <SettlementTab tripId={tripId} finance={finance} navigation={navigation} onOpenAdvanced={() => setShowAdvanced(true)} onChanged={loadAll} />}
               </>
             )}
           </Container>

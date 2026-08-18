@@ -1,38 +1,54 @@
-# Features in this zip
+# Fixes in this zip
 
-## 2. Shareable settlement summary — components/SettlementTab.js, screens/TripScreen.js
-New share icon in the Settlement screen's header, next to the existing "how this
-works" info icon. Builds a plain-text, WhatsApp-ready summary from whatever's
-*currently* outstanding on screen (same `toRefund`/`toPay` data the screen itself
-renders — never a stale or separately-computed number) and opens the native share
-sheet via React Native's `Share` API. Uses the same "Receive money / Pay these people"
-framing as the rest of this screen, not the underlying Trip Bank/personal split —
-someone reading it in a WhatsApp chat shouldn't need to understand the accounting
-model. `TripScreen.js` now passes `tripName` down so the summary can be headed with
-the actual trip name.
+## 1 & 2 — swipe doesn't work from Notifications/More — NotificationsScreen.js, MoreScreen.js
+Root cause: the swipe gesture only existed on `HomeScreen`. `Notifications` and `More`
+are separate *pushed* screens, not in-place tabs, so once you're actually on one of
+them there was no swipe handler at all — a gesture on Home has no way to reach a
+component that isn't even mounted. Added matching `PanResponder`s to both screens,
+using the real navigation stack rather than reconstructing history by hand: forward
+(right-to-left) calls `navigation.navigate('More')`; backward (left-to-right) calls
+`navigation.goBack()`, which correctly returns to wherever the sequence actually was
+(Trips), not a hardcoded destination.
 
-## 5. Search/filter within a trip's expenses — components/ExpensesTab.js
-Added a search box (matches description, category, or payer name) and category filter
-chips, entirely client-side against the expense list already in memory — no new
-queries. The "Total spent" header switches to "Matching" and reflects the filtered
-total when a filter is active, so it never shows a number that doesn't match what's
-listed below it. Empty state added for "filter matched nothing," distinct from "this
-trip has no expenses at all."
+## 3 — back from a trip lands on the wrong Home tab — TripScreen.js, HomeScreen.js
+`TripScreen`'s three back-to-Home code paths (header arrow, delete-trip success,
+hardware back fallback) now explicitly pass `{ homeTab: 'overview' }`. `HomeScreen`
+syncs its tab from that param — but only when a screen explicitly provides it, not on
+every focus, since the Notifications/More swipe-back above needs Home to stay on
+whatever tab it was actually left on (usually Trips). Both behaviors needed to coexist
+without fighting each other.
 
-## 6. Budget/limit warnings per category — db.js, components/ExpensesTab.js
-- **db.js**: new `category_budgets` table (per-trip, per-category — a Food budget on
-  one trip has nothing to do with another). `setCategoryBudget()` (amount ≤ 0 clears
-  the budget rather than storing a meaningless zero), `getCategoryBudgets()`, and
-  `getCategoryBudgetStatus()` — joins budgets against actual category spend
-  (`amount * fx_rate`, same conversion every other total in the app uses) into one
-  ready-to-render list with `spent`/`budget`/`remaining`/`isOver` per category.
-- **ExpensesTab.js**: a target-icon next to the total opens a themed sheet (reusing the
-  existing `BottomSheet` component) to set a limit per category — also reachable from
-  the empty state, so a budget can be set before the first expense exists. Categories
-  currently over budget get a ⚠️ on their filter chip and a warning banner naming them.
-- 8 new tests in `test/budgets.test.js`: persistence, update-not-duplicate, clearing via
-  0, under/over-budget status, categories with spend but no budget, budgeted categories
-  with zero spend yet, and per-trip isolation.
+## 4 — back button exits the app — TripScreen.js
+Confirmed real: `SplashScreen` launches straight into an active trip via
+`navigation.replace('Trip', ...)`, which makes Trip the root of the stack with nothing
+below it. The on-screen back arrow already had a fallback for that case; Android's
+hardware/gesture back button does not go through that code at all — it's handled by
+React Navigation's default behavior, which lets the press fall through to the OS
+(exiting the app) when there's nothing left to pop. Added a `BackHandler` listener that
+intercepts exactly that case and routes to Home instead.
 
-Full suite: 82/82 passing (was 74; +8 for budgets). Whole-repo syntax check: 28/28
-files clean with a real JSX-aware parser.
+## 5 — stuck on a filtered Trips view — HomeScreen.js
+The currency-filter cards only existed on the Overview tab, so once you'd drilled into
+a filtered Trips view there was no way to switch currencies without backing all the way
+out. Replaced the single "clear filter" chip with an always-visible All/INR/USD/etc.
+switcher row directly on the Trips tab — only rendered at all when there's more than
+one currency in play.
+
+## 6 — People popup not themed — HomeScreen.js
+Was a native `Alert.alert`, which always renders as the OS's own dialog regardless of
+app theme (exactly the mismatched gray popup in your screenshot). Replaced with the
+app's existing themed `BottomSheet` component, same as every other in-app sheet.
+
+## 7 — keyboard auto-opening on Create Trip — CreateTripScreen.js
+Removed `autoFocus` from the Trip Name field.
+
+## 8 — bottom nav icons unevenly spaced — HomeScreen.js
+The center "+" FAB had no `flex: 1` while its four sibling nav items did, so it wasn't
+claiming an equal-width slot in the row. Wrapped it in an equal-width flex container
+without changing the visual size of the circular button itself.
+
+## 9 — "what else would you build as a user?"
+Answered directly in the chat response, not as a code change.
+
+Full suite: 74/74 passing. Whole-repo syntax check: 28/28 files clean with a real
+JSX-aware parser.

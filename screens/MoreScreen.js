@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Linking, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, TouchableOpacity, Linking, ActivityIndicator, StyleSheet, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme, ConfirmDialog } from '../components/UI';
@@ -60,8 +60,22 @@ export default function MoreScreen({ navigation }) {
     setBusy(null);
   };
 
+  // Last screen in the Overview → Trips → Notifications → More swipe sequence — no
+  // forward swipe from here (nothing after More), backward goes back to Notifications
+  // via the real navigation stack. See NotificationsScreen.js for the fuller
+  // explanation of why each screen needs its own handler.
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderRelease: (_, gesture) => {
+        if (gesture.dx > 60 && navigation.canGoBack()) navigation.goBack();
+      },
+    })
+  ).current;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} {...panResponder.panHandlers}>
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Feather name="arrow-left" size={22} color={theme.ink} />

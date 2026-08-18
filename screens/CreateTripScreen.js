@@ -174,7 +174,6 @@ export default function CreateTripScreen({ navigation }) {
           value={name}
           onChangeText={(t) => { setName(t); if (nameError) setNameError(false); }}
           onFocus={scrollFocusedIntoView}
-          autoFocus
         />
         {nameError && <Text style={styles.errorText}>Trip name required</Text>}
 

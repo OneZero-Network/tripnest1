@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -17,8 +17,28 @@ export default function NotificationsScreen({ navigation }) {
 
   const openTrip = (item) => navigation.navigate('Trip', { tripId: item.tripId, tripName: item.tripName });
 
+  // Continues the same Overview → Trips → Notifications → More swipe sequence that
+  // starts on the Home screen. Notifications/More are separate pushed screens (not
+  // in-place tabs), so each needs its own handler — a swipe gesture on Home has no way
+  // to reach a component that isn't even mounted yet. Forward (right-to-left) pushes
+  // the next screen in the sequence; backward (left-to-right) is just goBack(), which
+  // correctly returns to wherever the sequence was previously (Trips), not a hardcoded
+  // destination — the whole point of using the real navigation stack instead of trying
+  // to reconstruct "where the user came from" by hand.
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderRelease: (_, gesture) => {
+        if (Math.abs(gesture.dx) < 60) return;
+        if (gesture.dx < 0) navigation.navigate('More');
+        else if (navigation.canGoBack()) navigation.goBack();
+      },
+    })
+  ).current;
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} {...panResponder.panHandlers}>
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Feather name="arrow-left" size={22} color={theme.ink} />
