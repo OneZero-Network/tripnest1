@@ -17,6 +17,8 @@ export default function CreateTripScreen({ navigation }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef(null);
+  const exToRef = useRef(null);
+  const contributionRefs = useRef({}); // { travelerName: TextInput ref } — populated as rows render, used to chain "next" focus in traveler order
   // The previous approach (onFocus on a couple of specific fields + a guessed 120ms
   // timeout, then always scrolling to the very END of the form) was wrong in two ways:
   // it only covered fields someone remembered to wire up, and unconditionally jumping
@@ -213,9 +215,13 @@ export default function CreateTripScreen({ navigation }) {
                 value={exFrom}
                 onChangeText={setExFrom}
                 onFocus={scrollFocusedIntoView}
+                returnKeyType="next"
+                onSubmitEditing={() => exToRef.current?.focus()}
+                blurOnSubmit={false}
               />
               <Feather name="arrow-right" size={16} color={theme.inkMute} style={{ marginHorizontal: 8 }} />
               <TextInput
+                ref={exToRef}
                 style={[styles.contributionInput, { flex: 1 }]}
                 placeholder={`${foreignCurrency || 'FX'} received`}
                 placeholderTextColor={theme.inkMute}
@@ -223,6 +229,7 @@ export default function CreateTripScreen({ navigation }) {
                 value={exTo}
                 onChangeText={setExTo}
                 onFocus={scrollFocusedIntoView}
+                returnKeyType="done"
               />
               <TouchableOpacity
                 style={styles.addBtn}
@@ -262,7 +269,8 @@ export default function CreateTripScreen({ navigation }) {
             onChangeText={setTravelerInput}
             onSubmitEditing={addTraveler}
             onFocus={scrollFocusedIntoView}
-            returnKeyType="done"
+            returnKeyType="next"
+            blurOnSubmit={false}
           />
           <TouchableOpacity style={styles.addBtn} onPress={addTraveler}>
             <Feather name="plus" size={18} color="#fff" />
@@ -306,10 +314,11 @@ export default function CreateTripScreen({ navigation }) {
             {travelers.length > 0 ? (
               <View style={styles.contributionsBlock}>
                 <Text style={[styles.label, { marginTop: theme.space.lg }]}>Initial contributions (optional)</Text>
-                {travelers.map((t) => (
+                {travelers.map((t, idx) => (
                   <View key={t} style={styles.contributionRow}>
                     <Text style={styles.contributionName}>{t}</Text>
                     <TextInput
+                      ref={(r) => { contributionRefs.current[t] = r; }}
                       style={[styles.contributionInput, contributionErrors[t] && styles.inputError]}
                       placeholder="0"
                       placeholderTextColor={theme.inkMute}
@@ -320,6 +329,12 @@ export default function CreateTripScreen({ navigation }) {
                         if (contributionErrors[t]) setContributionErrors((prev) => ({ ...prev, [t]: false }));
                       }}
                       onFocus={scrollFocusedIntoView}
+                      returnKeyType={idx < travelers.length - 1 ? 'next' : 'done'}
+                      onSubmitEditing={() => {
+                        const nextName = travelers[idx + 1];
+                        if (nextName) contributionRefs.current[nextName]?.focus();
+                      }}
+                      blurOnSubmit={idx === travelers.length - 1}
                     />
                   </View>
                 ))}

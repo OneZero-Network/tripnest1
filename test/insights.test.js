@@ -31,6 +31,7 @@ describe('getLifetimeInsights (Overview summary cards)', () => {
     assert.equal(insights.activeTripCount, 1);
     assert.equal(insights.closedTripCount, 1);
     assert.equal(insights.totalUniqueTravelers, 3); // A, B, C — A not double-counted
+    assert.deepEqual(insights.travelerNames, ['A', 'B', 'C']);
 
     const inr = insights.spendByCurrency.find((s) => s.currency === 'INR');
     const usd = insights.spendByCurrency.find((s) => s.currency === 'USD');

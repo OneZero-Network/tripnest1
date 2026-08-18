@@ -94,12 +94,16 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
 
   // Net balance across both the Trip Bank and personal-expense settlements — the one
   // number that answers "is this person ahead or behind" without the reader needing to
-  // know those are two separate computations under the hood.
-  const netBalance = (name) => {
-    const bank = finance?.bankSettlement?.balances?.[name] || 0;
-    const personal = finance?.liveForecast?.balances?.[name] || 0;
-    return +(bank + personal).toFixed(2);
+  // know those are two separate computations under the hood. Returns the two components
+  // too (not just the sum) so the expanded card can show its work — a single combined
+  // number with no visible breakdown is exactly what reads as "vague" even when the
+  // arithmetic underneath it is correct.
+  const balanceParts = (name) => {
+    const bank = +(finance?.bankSettlement?.balances?.[name] || 0).toFixed(2);
+    const personal = +(finance?.liveForecast?.balances?.[name] || 0).toFixed(2);
+    return { bank, personal, net: +(bank + personal).toFixed(2) };
   };
+  const netBalance = (name) => balanceParts(name).net;
 
   const cs = currencySymbol(finance?.baseCurrency || 'INR');
 
@@ -178,7 +182,9 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
                   />
                 </TouchableOpacity>
 
-                {expandedId === item.id && (
+                {expandedId === item.id && (() => {
+                  const parts = balanceParts(item.name);
+                  return (
                   <View style={styles.expandedDetail}>
                     <DetailLine label="Contributed to Trip Bank" value={`${cs}${(contributedByName[item.name] || 0).toFixed(0)}`} />
                     {spentByName[item.name] > 0 && (
@@ -186,6 +192,19 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
                     )}
                     {sharedSpendByName[item.name] > 0 && (
                       <DetailLine label="Share of group spend" value={`${cs}${sharedSpendByName[item.name].toFixed(0)}`} />
+                    )}
+                    {/* The two numbers that actually add up to Net balance below — shown
+                        explicitly rather than making the reader trust a single combined
+                        figure. Trip Bank and Personal are genuinely separate settlement
+                        mechanisms (contributed-vs-owed-share-of-pool-spend, and
+                        paid-vs-owed-share of personal-funded expenses respectively); a
+                        person can easily be owed by one and owe the other at the same
+                        time, which is exactly why the net alone can look unexplained. */}
+                    {parts.bank !== 0 && (
+                      <DetailLine label="Trip Bank settlement" value={`${parts.bank >= 0 ? '+' : '-'}${cs}${Math.abs(parts.bank).toFixed(2)}`} />
+                    )}
+                    {parts.personal !== 0 && (
+                      <DetailLine label="Personal settlement" value={`${parts.personal >= 0 ? '+' : '-'}${cs}${Math.abs(parts.personal).toFixed(2)}`} />
                     )}
                     <DetailLine label="Net balance" value={`${bal >= 0 ? '+' : '-'}${cs}${Math.abs(bal)}`} strong />
                     <View style={styles.expandedActions}>
@@ -197,7 +216,8 @@ export default function TravelersTab({ tripId, travelers, expenses, finance, onC
                       </TouchableOpacity>
                     </View>
                   </View>
-                )}
+                  );
+                })()}
               </View>
             );
           })}

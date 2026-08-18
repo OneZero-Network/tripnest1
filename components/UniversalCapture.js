@@ -400,7 +400,7 @@ const makeStyles = (theme) => StyleSheet.create({
   errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dangerWash || 'rgba(220,80,80,0.12)', borderRadius: theme.radius.sm, padding: theme.space.sm, marginTop: theme.space.sm },
   errorText: { color: theme.danger, fontSize: theme.type.caption, fontWeight: theme.weight.semibold, flex: 1 },
   fab: {
-    position: 'absolute', end: theme.space.lg, width: 45, height: 45, borderRadius: 23,
+    position: 'absolute', alignSelf: 'center', width: 45, height: 45, borderRadius: 23,
     backgroundColor: theme.brandDeep, alignItems: 'center', justifyContent: 'center',
     shadowColor: theme.brandDeep, shadowOpacity: 0.16, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },

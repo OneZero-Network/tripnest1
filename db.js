@@ -1159,8 +1159,9 @@ export async function getLifetimeInsights() {
   const activeTripCount = trips.filter((t) => t.status !== 'closed').length;
   const closedTripCount = totalTripCount - activeTripCount;
 
-  const allTravelerRows = await db.getAllAsync('SELECT DISTINCT name FROM travelers');
+  const allTravelerRows = await db.getAllAsync('SELECT DISTINCT name FROM travelers ORDER BY name COLLATE NOCASE ASC');
   const totalUniqueTravelers = allTravelerRows.length;
+  const travelerNames = allTravelerRows.map((r) => r.name);
 
   const spendByCurrencyMap = {};
   let topTrip = null; // the single highest-spend trip, for a "biggest trip" card
@@ -1183,7 +1184,7 @@ export async function getLifetimeInsights() {
     .sort((a, b) => b.total - a.total);
   if (topTrip) topTrip.amount = Math.round((topTrip.amount + Number.EPSILON) * 100) / 100;
 
-  return { totalTripCount, activeTripCount, closedTripCount, totalUniqueTravelers, spendByCurrency, topTrip };
+  return { totalTripCount, activeTripCount, closedTripCount, totalUniqueTravelers, travelerNames, spendByCurrency, topTrip };
 }
 
 export async function getDestinationInsights() {

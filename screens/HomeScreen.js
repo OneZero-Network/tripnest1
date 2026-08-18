@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, PanResponder, Alert } from 'react-native';
 // react-native-safe-area-context's SafeAreaView (not the react-native core one, which is
 // iOS-only and a no-op on Android — that no-op is exactly why the greeting text was
 // rendering underneath the Android status bar).
@@ -46,6 +46,7 @@ export default function HomeScreen({ navigation }) {
   const [recentActivity, setRecentActivity] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [homeTab, setHomeTab] = useState('overview');
+  const [tripsFilterCurrency, setTripsFilterCurrency] = useState(null); // set by tapping a "Spent (currency)" card — drills the Trips tab down to just that currency's trips
 
   const loadTrips = async () => {
     try {
@@ -87,8 +88,10 @@ export default function HomeScreen({ navigation }) {
     return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
   })();
 
-  const previousTrips = trips.filter((t) => t.status === 'active' && t.id !== current?.id);
-  const archivedTrips = trips.filter((t) => t.status === 'closed');
+  const matchesCurrencyFilter = (t) => !tripsFilterCurrency || (t.base_currency || 'INR') === tripsFilterCurrency;
+  const previousTrips = trips.filter((t) => t.status === 'active' && t.id !== current?.id && matchesCurrencyFilter(t));
+  const archivedTrips = trips.filter((t) => t.status === 'closed' && matchesCurrencyFilter(t));
+  const currentMatchesFilter = current && matchesCurrencyFilter(current);
 
   const openTrip = (t) => navigation.navigate('Trip', { tripId: t.id, tripName: t.name });
 
@@ -99,8 +102,35 @@ export default function HomeScreen({ navigation }) {
     setHomeTab(key);
   };
 
+  // Right-to-left swipe moves forward through Overview → Trips → Notifications → More
+  // (the same left-to-right order the bottom nav icons are laid out in); left-to-right
+  // swipe moves back. Overview/Trips are in-place content on this screen, so those two
+  // just flip `homeTab`; Notifications/More are separate pushed screens, so swiping into
+  // them navigates the same way tapping their icon does. Swiping BACK out of
+  // Notifications/More isn't handled here — that's a different screen instance with its
+  // own back gesture/button, not something this screen's responder can see.
+  const SWIPE_ORDER = ['overview', 'trips', 'notifications', 'more'];
+  const homeTabRef = useRef(homeTab);
+  homeTabRef.current = homeTab; // kept in sync every render so the PanResponder below (created once) always reads the CURRENT tab, not whatever it was on first mount
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 24 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderRelease: (_, gesture) => {
+        if (Math.abs(gesture.dx) < 60) return; // not a deliberate swipe
+        const currentIndex = SWIPE_ORDER.indexOf(homeTabRef.current);
+        if (currentIndex === -1) return;
+        if (gesture.dx < 0 && currentIndex < SWIPE_ORDER.length - 1) {
+          handleHomeTabPress(SWIPE_ORDER[currentIndex + 1]); // swiped right-to-left → forward
+        } else if (gesture.dx > 0 && currentIndex > 0) {
+          handleHomeTabPress(SWIPE_ORDER[currentIndex - 1]); // swiped left-to-right → back
+        }
+      },
+    })
+  ).current;
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']} {...panResponder.panHandlers}>
       <FlatList
         data={[]}
         renderItem={null}
@@ -245,21 +275,42 @@ export default function HomeScreen({ navigation }) {
                     covers "you have nothing yet." */}
                 {lifetime && lifetime.totalTripCount > 0 && (
                   <View style={styles.lifetimeStatsRow}>
-                    {/* Trip count / people / spend-per-currency don't each have their own
-                        detail screen, so all three route to the same sensible place: the
-                        full Trips list — "show me" rather than a dead-end tap. The
-                        biggest-trip card below is the one that CAN go somewhere more
-                        specific (that exact trip), and does. */}
-                    <TouchableOpacity style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
+                    {/* Each card now drills to something specific, not just a uniform
+                        dump on the Trips list: Trips clears any filter and shows
+                        everything; each currency card filters Trips down to just that
+                        currency's trips (a real filter, not a bigger list to scan);
+                        People doesn't have a dedicated screen to route to, so it lists
+                        the actual names inline rather than pretending "view all trips"
+                        answers "who." */}
+                    <TouchableOpacity
+                      style={styles.lifetimeStatCard}
+                      onPress={() => { setTripsFilterCurrency(null); setHomeTab('trips'); }}
+                      accessibilityRole="button"
+                      accessibilityLabel="View all trips"
+                    >
                       <Text style={styles.lifetimeStatValue}>{lifetime.totalTripCount}</Text>
                       <Text style={styles.lifetimeStatLabel}>{lifetime.totalTripCount === 1 ? 'Trip' : 'Trips'}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
+                    <TouchableOpacity
+                      style={styles.lifetimeStatCard}
+                      onPress={() => Alert.alert(
+                        lifetime.totalUniqueTravelers === 1 ? 'Person tracked' : 'People tracked',
+                        lifetime.travelerNames?.length ? lifetime.travelerNames.join('\n') : 'No one yet.'
+                      )}
+                      accessibilityRole="button"
+                      accessibilityLabel="See everyone tracked across your trips"
+                    >
                       <Text style={styles.lifetimeStatValue}>{lifetime.totalUniqueTravelers}</Text>
                       <Text style={styles.lifetimeStatLabel}>{lifetime.totalUniqueTravelers === 1 ? 'Person' : 'People'}</Text>
                     </TouchableOpacity>
                     {lifetime.spendByCurrency.slice(0, 2).map((s) => (
-                      <TouchableOpacity key={s.currency} style={styles.lifetimeStatCard} onPress={() => setHomeTab('trips')} accessibilityRole="button" accessibilityLabel="View all trips">
+                      <TouchableOpacity
+                        key={s.currency}
+                        style={styles.lifetimeStatCard}
+                        onPress={() => { setTripsFilterCurrency(s.currency); setHomeTab('trips'); }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View ${s.currency} trips`}
+                      >
                         <Text style={styles.lifetimeStatValue} numberOfLines={1} adjustsFontSizeToFit>
                           {currencySymbol(s.currency)}{Math.round(s.total).toLocaleString()}
                         </Text>
@@ -303,8 +354,14 @@ export default function HomeScreen({ navigation }) {
               </>
             ) : (
               <>
-                {current && <SectionHeader title="Current" />}
-                {current && (
+                {tripsFilterCurrency && (
+                  <TouchableOpacity style={styles.filterChip} onPress={() => setTripsFilterCurrency(null)} accessibilityRole="button" accessibilityLabel="Clear currency filter">
+                    <Text style={styles.filterChipText}>{tripsFilterCurrency} trips only</Text>
+                    <Feather name="x" size={14} color={theme.brandDeep} />
+                  </TouchableOpacity>
+                )}
+                {current && currentMatchesFilter && <SectionHeader title="Current" />}
+                {current && currentMatchesFilter && (
                   <View style={[styles.listCard, { marginBottom: theme.space.xxl }]}>
                     <TripRow trip={current} onPress={() => openTrip(current)} isLast />
                   </View>
@@ -417,6 +474,8 @@ const makeStyles = (theme) => StyleSheet.create({
   insightTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   insightBody: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2, lineHeight: 16 },
   lifetimeStatsRow: { flexDirection: 'row', gap: theme.space.sm, marginTop: theme.space.lg },
+  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: theme.brandWash || 'rgba(14,124,134,0.12)', borderRadius: theme.radius.lg, paddingHorizontal: 12, paddingVertical: 6, marginBottom: theme.space.md },
+  filterChipText: { color: theme.brandDeep, fontSize: theme.type.caption, fontWeight: theme.weight.semibold },
   lifetimeStatCard: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, paddingVertical: theme.space.md, paddingHorizontal: theme.space.sm, alignItems: 'center' },
   lifetimeStatValue: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
   lifetimeStatLabel: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
