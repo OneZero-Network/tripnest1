@@ -1144,6 +1144,48 @@ export async function getConsolidatedOverview() {
   };
 }
 
+// ---- Lifetime insights across every trip (any status), for the Overview screen's
+// summary cards. Deliberately separate from getConsolidatedOverview, which is scoped to
+// ACTIVE trips only (for "what needs my attention today") — this one is scoped to
+// EVERYTHING the user has ever tracked, closed trips included, for "how much have I
+// actually used this app / spent overall." Money is grouped by each trip's own
+// base_currency rather than summed into one number — a ₹40,000 Goa trip and a $2,000
+// Dubai trip added together as "42000" would be a meaningless, actively misleading
+// figure, not a simplification.
+export async function getLifetimeInsights() {
+  const db = await getDB();
+  const trips = await db.getAllAsync('SELECT * FROM trips');
+  const totalTripCount = trips.length;
+  const activeTripCount = trips.filter((t) => t.status !== 'closed').length;
+  const closedTripCount = totalTripCount - activeTripCount;
+
+  const allTravelerRows = await db.getAllAsync('SELECT DISTINCT name FROM travelers');
+  const totalUniqueTravelers = allTravelerRows.length;
+
+  const spendByCurrencyMap = {};
+  let topTrip = null; // the single highest-spend trip, for a "biggest trip" card
+  for (const trip of trips) {
+    const currency = trip.base_currency || 'INR';
+    const spentRow = await db.getFirstAsync('SELECT COALESCE(SUM(amount*fx_rate),0) as total FROM expenses WHERE trip_id = ?', trip.id);
+    const spent = spentRow.total;
+    if (!spendByCurrencyMap[currency]) spendByCurrencyMap[currency] = { currency, total: 0, tripCount: 0 };
+    spendByCurrencyMap[currency].total += spent;
+    spendByCurrencyMap[currency].tripCount += 1;
+    if (spent > 0 && (!topTrip || spent > topTrip.amount)) {
+      topTrip = { name: trip.name, amount: spent, currency };
+    }
+  }
+  // Round here, same reasoning as computeFinance's round2 — repeated float addition
+  // across many trips' expense sums can otherwise leave 2-decimal-looking totals with
+  // trailing floating-point noise by the time they reach the screen.
+  const spendByCurrency = Object.values(spendByCurrencyMap)
+    .map((s) => ({ ...s, total: Math.round((s.total + Number.EPSILON) * 100) / 100 }))
+    .sort((a, b) => b.total - a.total);
+  if (topTrip) topTrip.amount = Math.round((topTrip.amount + Number.EPSILON) * 100) / 100;
+
+  return { totalTripCount, activeTripCount, closedTripCount, totalUniqueTravelers, spendByCurrency, topTrip };
+}
+
 export async function getDestinationInsights() {
   const db = await getDB();
   const trips = await db.getAllAsync('SELECT * FROM trips ORDER BY created_at ASC');

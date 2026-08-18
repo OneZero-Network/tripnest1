@@ -327,15 +327,21 @@ export default function CreateTripScreen({ navigation }) {
             )}
           </>
         )}
-        </ScrollView>
-      </View>
 
-      <View style={styles.footer}>
+        {/* Moved inside the ScrollView, from a fixed footer outside it. That's the real
+            fix for "auto-scroll didn't work" — scrollToEnd() can only ever reveal
+            content that's actually IN the scroll view. A fixed footer sibling is never
+            reachable by scrolling no matter how the keyboard math works out, so on any
+            device/keyboard combination where the shrink calculation comes up even
+            slightly short, the button was permanently stuck under the keyboard with
+            nothing the user could do about it. As the last scrollable item, it's now
+            always reachable the same way every other field is. */}
         <PrimaryButton
           label={saving ? 'Creating…' : 'Create Trip'}
           onPress={createTrip}
-          style={{ opacity: name.trim() ? 1 : 0.5 }}
+          style={{ opacity: name.trim() ? 1 : 0.5, marginTop: theme.space.xl }}
         />
+        </ScrollView>
       </View>
     </KeyboardAvoidingView>
   );

@@ -6,7 +6,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { getDB, computeTripData, getDrafts, getDestinationInsights, getConsolidatedOverview, getNotificationFeed } from '../db';
+import { getDB, computeTripData, getDrafts, getDestinationInsights, getConsolidatedOverview, getNotificationFeed, getLifetimeInsights } from '../db';
 import { getTripCoverTheme } from '../tripTheme';
 import { LinearGradient } from 'expo-linear-gradient';
 import { EmptyState, IconBadge, SectionHeader, ErrorState, currencySymbol, Container, useTheme } from '../components/UI';
@@ -42,6 +42,7 @@ export default function HomeScreen({ navigation }) {
   const [current, setCurrent] = useState(null);
   const [insights, setInsights] = useState([]);
   const [consolidated, setConsolidated] = useState(null);
+  const [lifetime, setLifetime] = useState(null);
   const [recentActivity, setRecentActivity] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [homeTab, setHomeTab] = useState('overview');
@@ -71,6 +72,7 @@ export default function HomeScreen({ navigation }) {
       }
       setInsights(await getDestinationInsights());
       setConsolidated(await getConsolidatedOverview());
+      setLifetime(await getLifetimeInsights());
       setRecentActivity((await getNotificationFeed()).slice(0, 3));
       setLoadError(null);
     } catch (err) {
@@ -233,6 +235,43 @@ export default function HomeScreen({ navigation }) {
                   </TouchableOpacity>
                 )}
 
+                {/* Lifetime stats across every trip ever created (any status) — distinct
+                    from the destination-repeat insights below, which only fire on a
+                    2nd+ visit to the same place. This is the simple "how much have I
+                    used this app" summary: trip count, people tracked, and total spend
+                    per currency (never summed across currencies — a ₹ and a $ total
+                    added together would be a real number that means nothing). Only
+                    shown once there's at least one trip; the empty state above already
+                    covers "you have nothing yet." */}
+                {lifetime && lifetime.totalTripCount > 0 && (
+                  <View style={styles.lifetimeStatsRow}>
+                    <View style={styles.lifetimeStatCard}>
+                      <Text style={styles.lifetimeStatValue}>{lifetime.totalTripCount}</Text>
+                      <Text style={styles.lifetimeStatLabel}>{lifetime.totalTripCount === 1 ? 'Trip' : 'Trips'}</Text>
+                    </View>
+                    <View style={styles.lifetimeStatCard}>
+                      <Text style={styles.lifetimeStatValue}>{lifetime.totalUniqueTravelers}</Text>
+                      <Text style={styles.lifetimeStatLabel}>{lifetime.totalUniqueTravelers === 1 ? 'Person' : 'People'}</Text>
+                    </View>
+                    {lifetime.spendByCurrency.slice(0, 2).map((s) => (
+                      <View key={s.currency} style={styles.lifetimeStatCard}>
+                        <Text style={styles.lifetimeStatValue} numberOfLines={1} adjustsFontSizeToFit>
+                          {currencySymbol(s.currency)}{Math.round(s.total).toLocaleString()}
+                        </Text>
+                        <Text style={styles.lifetimeStatLabel}>Spent{lifetime.spendByCurrency.length > 1 ? ` (${s.currency})` : ''}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {lifetime?.topTrip && (
+                  <View style={styles.topTripCard}>
+                    <Feather name="award" size={16} color={theme.brandDeep} />
+                    <Text style={styles.topTripText}>
+                      Biggest trip so far: <Text style={{ fontWeight: theme.weight.semibold }}>{lifetime.topTrip.name}</Text> — {currencySymbol(lifetime.topTrip.currency)}{Math.round(lifetime.topTrip.amount).toLocaleString()}
+                    </Text>
+                  </View>
+                )}
+
                 {/* Real insights, not fabricated ones — only appears once a place has
                     actually been visited 2+ times, computed from real trip/expense/
                     traveler data via getDestinationInsights, never invented. */}
@@ -366,6 +405,12 @@ const makeStyles = (theme) => StyleSheet.create({
   insightEmoji: { fontSize: 26 },
   insightTitle: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.ink },
   insightBody: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2, lineHeight: 16 },
+  lifetimeStatsRow: { flexDirection: 'row', gap: theme.space.sm, marginTop: theme.space.lg },
+  lifetimeStatCard: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, paddingVertical: theme.space.md, paddingHorizontal: theme.space.sm, alignItems: 'center' },
+  lifetimeStatValue: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
+  lifetimeStatLabel: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
+  topTripCard: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, padding: theme.space.md, marginTop: theme.space.md },
+  topTripText: { flex: 1, fontSize: theme.type.caption, color: theme.inkSoft },
   viewAllText: { color: theme.brandDeep, fontWeight: theme.weight.semibold, fontSize: theme.type.body },
   listCard: {
     backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line,

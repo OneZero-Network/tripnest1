@@ -1,39 +1,28 @@
 # Fixes in this zip
 
-## 1. Keyboard on Create Trip — screens/CreateTripScreen.js
-Not the double-resize layout bug from last round (that fix is still in place and
-correct) — this was a discoverability request: when the keyboard is open, nothing
-indicates there's more form below it. Added auto-scroll-on-focus for the lower-down
-fields (traveler name, each contribution amount) so the rest of the form and the Create
-Trip button scroll into view automatically instead of the user having to guess they
-should scroll manually.
+## 1. Auto-scroll on Create Trip — screens/CreateTripScreen.js
+Last round's `scrollToEnd()` fix didn't actually work because the "Create Trip" button
+lived **outside** the ScrollView, as a fixed footer sibling — no amount of scrolling the
+ScrollView could ever reveal it. Moved the button to be the last item *inside* the
+ScrollView instead. This is the real fix: scrolling (auto or manual) now always reaches
+the button, on every device/keyboard-height combination, rather than depending on the
+KeyboardAvoidingView's shrink math working out exactly right. The `onFocus`
+auto-scroll-to-end from last round is unchanged and now actually has something
+meaningful to scroll to.
 
-## 2. Decimal precision — finance/calculator.js + components/UI.js + 5 display files
-**Root cause confirmed and fixed.** `computeFinance()` had several raw floating-point
-sums (`totalReceived`, `bankSpent`, `currentCash`, `exchangedOutBase`, foreign wallet
-figures) with no rounding at all, unlike the rest of that file — that's exactly how
-"₹0.00999999999999990905" reached your Settlement screen.
-- `finance/calculator.js`: added a `round2()` helper, applied to every numeric field
-  `computeFinance` returns.
-- `components/UI.js`: added a `formatMoney()` display helper (always exactly 2 decimals).
-- Applied `formatMoney()` everywhere money was rendered raw/unformatted:
-  `SettlementTab.js`, `ExpensesTab.js`, `TimelineTab.js`, `TripBankSettingsSheet.js`,
-  `ActivityItemSheet.js`. (A few spots elsewhere use `.toFixed(0)` deliberately for
-  rounded headline numbers — left alone, that's an existing design choice, not this bug.)
-- `test/exchange.test.js`: added 2 regression tests. Verified they actually catch the
-  bug — temporarily reverted the `currentCash` fix, confirmed the new test failed with
-  the exact symptom, then restored it. Full suite: 71/71 passing.
+## 2. Lifetime insight cards on Overview — db.js + screens/HomeScreen.js
+Added `getLifetimeInsights()` in `db.js`: counts every trip ever created (any status),
+unique travelers tracked across all of them, and total spend **grouped by each trip's
+own currency** — a ₹ trip and a $ trip are never summed into one meaningless number.
+Also surfaces the single highest-spend trip as a "biggest trip so far" card.
 
-## 3. Expense edit not going through
-**Investigated, could not find a new bug.** Re-traced the fix from two rounds ago (the
-missing `id` on the event object built in `ExpensesTab.js`, which broke the detail
-sheet's data-loading effect) and confirmed it is still correctly in place — checked
-`ExpensesTab.js`, `ActivityItemSheet.js`'s effect logic, and `TimelineTab.js`'s event
-construction, all structurally correct. No fix included in this zip for item 3 because
-none was identified — if this is still reproducing on the latest build, the next step
-is confirming exactly which screen/tab the tap originated from (Expenses tab vs.
-Activity tab vs. elsewhere), since that's what will actually localize it.
+On the Overview screen, this renders as a row of stat cards (trip count, people, spend
+per currency) plus a "biggest trip" card, shown once there's at least one trip — the
+empty state (screenshot 2) is untouched, since there's nothing to summarize yet.
 
-## Suggestions (Group Management, WhatsApp/Payment integration)
-No code changes — both already match the existing roadmap sequencing (finance engine
-correctness first, these come later). Nothing actioned here.
+3 new tests in `test/insights.test.js` (its own file, since these need exact trip
+counts — tests in the same file share one in-memory DB, only separate *files* get a
+fresh one): empty state, multi-currency grouping with a repeated traveler, and a
+zero-expense trip still being counted without affecting existing totals.
+
+Full suite: 74/74 passing.
