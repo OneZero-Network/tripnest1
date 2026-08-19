@@ -36,6 +36,23 @@ export default function CreateTripScreen({ navigation }) {
       responder.scrollResponderScrollNativeHandleToKeyboard(handle, 100, true);
     }
   };
+  // Chip taps (Trip type, currency, Skip/Set up shared money) and "+ traveler" don't
+  // focus a text input, so scrollFocusedIntoView never fires for them — yet several of
+  // them reveal a whole new block of fields right below where the user just tapped
+  // (picking "International" reveals Foreign currency + exchange rows; picking "Set up
+  // shared money" reveals per-traveler contribution inputs; adding a traveler adds a row
+  // that can push those same contribution inputs further down). Without this, the newly
+  // revealed fields land below the fold and the only sign anything happened is the tapped
+  // chip itself changing color. scrollYRef tracks the live offset (ScrollView has no
+  // synchronous "current position" getter) so the nudge is relative to wherever the user
+  // actually is, not an absolute guess; the rAF delay lets the new content finish laying
+  // out first, since scrolling by a fixed amount before that would scroll past nothing.
+  const scrollYRef = useRef(0);
+  const nudgeScrollForNewContent = (amount = 180) => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: scrollYRef.current + amount, animated: true });
+    });
+  };
   const [name, setName] = useState('');
   const [travelerInput, setTravelerInput] = useState('');
   const [travelers, setTravelers] = useState([]);
@@ -59,6 +76,7 @@ export default function CreateTripScreen({ navigation }) {
     if (travelers.some((t) => t.toLowerCase() === trimmed.toLowerCase())) { setTravelerInput(''); return; }
     setTravelers((prev) => [...prev, trimmed]);
     setTravelerInput('');
+    nudgeScrollForNewContent(90); // reveals the new traveler chip, and — once Shared Money is on — that traveler's contribution row
   };
 
   const removeTraveler = (t) => setTravelers((prev) => prev.filter((x) => x !== t));
@@ -166,7 +184,15 @@ export default function CreateTripScreen({ navigation }) {
       </View>
 
       <View style={styles.body}>
-        <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: theme.space.xxl }}>        <Text style={styles.label}>Trip Name</Text>
+        <ScrollView
+          ref={scrollRef}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: theme.space.xxl }}
+          onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
+        >
+        <Text style={styles.label}>Trip Name</Text>
         <TextInput
           style={[styles.nameInput, nameError && styles.inputError]}
           placeholder="e.g. Goa Trip"
@@ -187,7 +213,7 @@ export default function CreateTripScreen({ navigation }) {
         <Text style={[styles.label, { marginTop: theme.space.xl }]}>Trip type</Text>
         <View style={styles.currencyRow}>
           <Chip label="Domestic" active={tripType === 'domestic'} onPress={() => setTripType('domestic')} />
-          <Chip label="International" active={tripType === 'international'} onPress={() => setTripType('international')} />
+          <Chip label="International" active={tripType === 'international'} onPress={() => { setTripType('international'); nudgeScrollForNewContent(220); }} />
         </View>
 
         {tripType === 'international' && (
@@ -199,7 +225,7 @@ export default function CreateTripScreen({ navigation }) {
             <Text style={[styles.label, { marginTop: theme.space.md }]}>Foreign currency</Text>
             <View style={styles.currencyRow}>
               {COMMON_CURRENCIES.filter((c) => c !== baseCurrency).concat(['SAR', 'JPY']).filter((v, i, a) => a.indexOf(v) === i).map((c) => (
-                <Chip key={c} label={c} active={foreignCurrency === c} onPress={() => setForeignCurrency(c)} />
+                <Chip key={c} label={c} active={foreignCurrency === c} onPress={() => { setForeignCurrency(c); nudgeScrollForNewContent(140); }} />
               ))}
             </View>
 
@@ -305,7 +331,7 @@ export default function CreateTripScreen({ navigation }) {
         <Text style={styles.sharedMoneyHint}>Will everyone pool money into one shared bank first, or just settle up directly later?</Text>
         <View style={styles.sharedMoneyChoiceRow}>
           <Chip label="Skip for now" active={!hasTripBank} onPress={() => setHasTripBank(false)} />
-          <Chip label="Set up shared money" active={hasTripBank} onPress={() => setHasTripBank(true)} />
+          <Chip label="Set up shared money" active={hasTripBank} onPress={() => { setHasTripBank(true); nudgeScrollForNewContent(220); }} />
         </View>
         {hasTripBank && (
           <>

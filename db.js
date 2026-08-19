@@ -1134,7 +1134,7 @@ export async function reopenTrip(tripId) {
 // Re-exported here so every existing "from '../db'" import across the app keeps working
 // unchanged — this is an internal file reorganization, not a public API change.
 export { setContributionPerPerson, computeSettlement, computeFinance, computeBankSettlement, computeFinalBankSettlement } from './finance/calculator.js';
-import { computeSettlement, computeFinance } from './finance/calculator.js';
+import { computeSettlement, computeFinance, computeBankSettlement } from './finance/calculator.js';
 
 // ---- Single entry point for TripScreen's load cycle ----
 // Computes settlement exactly once, then feeds it into both Finance and Today —
@@ -1241,6 +1241,16 @@ export async function getLifetimeInsights() {
   const travelerNames = allTravelerRows.map((r) => r.name);
 
   const spendByCurrencyMap = {};
+  // Each traveler's own total contribution into the shared Trip Bank, across every trip
+  // they've been part of — keyed by name, then by that trip's base currency (a traveler
+  // could appear in both an INR trip and a USD trip, so this can't be a single number any
+  // more than spendByCurrency can). Pulled straight from the contributions table (the
+  // same source Trip Bank balances use), summed as amount*fx_rate per trip so each row is
+  // already in that trip's base-currency terms; refunds are already sign-flipped rows in
+  // that table (see addOrRefundContribution), so they net out here automatically rather
+  // than needing special-casing.
+  const travelerCostMap = {};
+  travelerNames.forEach((n) => { travelerCostMap[n] = {}; });
   let topTrip = null; // the single highest-spend trip, for a "biggest trip" card
   for (const trip of trips) {
     const currency = trip.base_currency || 'INR';
@@ -1252,6 +1262,14 @@ export async function getLifetimeInsights() {
     if (spent > 0 && (!topTrip || spent > topTrip.amount)) {
       topTrip = { id: trip.id, name: trip.name, amount: spent, currency };
     }
+
+    const contribRows = await db.getAllAsync(
+      'SELECT traveler, COALESCE(SUM(amount * fx_rate), 0) as total FROM contributions WHERE trip_id = ? GROUP BY traveler', trip.id
+    );
+    contribRows.forEach((row) => {
+      if (!travelerCostMap[row.traveler]) travelerCostMap[row.traveler] = {};
+      travelerCostMap[row.traveler][currency] = (travelerCostMap[row.traveler][currency] || 0) + row.total;
+    });
   }
   // Round here, same reasoning as computeFinance's round2 — repeated float addition
   // across many trips' expense sums can otherwise leave 2-decimal-looking totals with
@@ -1261,7 +1279,16 @@ export async function getLifetimeInsights() {
     .sort((a, b) => b.total - a.total);
   if (topTrip) topTrip.amount = Math.round((topTrip.amount + Number.EPSILON) * 100) / 100;
 
-  return { totalTripCount, activeTripCount, closedTripCount, totalUniqueTravelers, travelerNames, spendByCurrency, topTrip };
+  // Flattened into the same order as travelerNames, each entry listing every currency
+  // that traveler has contributed in (almost always just one), largest first.
+  const travelerCosts = travelerNames.map((name) => ({
+    name,
+    costs: Object.entries(travelerCostMap[name] || {})
+      .map(([currency, total]) => ({ currency, total: Math.round((total + Number.EPSILON) * 100) / 100 }))
+      .sort((a, b) => b.total - a.total),
+  }));
+
+  return { totalTripCount, activeTripCount, closedTripCount, totalUniqueTravelers, travelerNames, travelerCosts, spendByCurrency, topTrip };
 }
 
 export async function getDestinationInsights() {

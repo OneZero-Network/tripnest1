@@ -458,12 +458,19 @@ export default function HomeScreen({ navigation, route }) {
         <Text style={styles.peopleModalTitle}>
           {lifetime?.totalUniqueTravelers === 1 ? 'Person tracked' : 'People tracked'}
         </Text>
-        {lifetime?.travelerNames?.length ? (
-          lifetime.travelerNames.map((name) => (
-            <Text key={name} style={styles.peopleModalRow}>{name}</Text>
+        {lifetime?.travelerCosts?.length ? (
+          lifetime.travelerCosts.map(({ name, costs }) => (
+            <View key={name} style={styles.peopleModalRow}>
+              <Text style={styles.peopleModalName}>{name}</Text>
+              <Text style={styles.peopleModalCost} numberOfLines={1}>
+                {costs.length
+                  ? costs.map((c) => `${currencySymbol(c.currency)}${Math.round(c.total).toLocaleString()}`).join(' · ')
+                  : '—'}
+              </Text>
+            </View>
           ))
         ) : (
-          <Text style={styles.peopleModalRow}>No one yet.</Text>
+          <Text style={styles.peopleModalEmpty}>No one yet.</Text>
         )}
       </BottomSheet>
     </SafeAreaView>
@@ -534,7 +541,10 @@ const makeStyles = (theme) => StyleSheet.create({
   filterChipTextActive: { color: '#fff' },
   currencySwitchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs, marginBottom: theme.space.md },
   peopleModalTitle: { fontSize: theme.type.heading, fontWeight: theme.weight.semibold, color: theme.ink, marginBottom: theme.space.md },
-  peopleModalRow: { fontSize: theme.type.body, color: theme.ink, paddingVertical: theme.space.sm, borderBottomWidth: 1, borderBottomColor: theme.line },
+  peopleModalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.sm, paddingVertical: theme.space.sm, borderBottomWidth: 1, borderBottomColor: theme.line },
+  peopleModalName: { fontSize: theme.type.body, color: theme.ink, flexShrink: 1 },
+  peopleModalCost: { fontSize: theme.type.body, fontWeight: theme.weight.semibold, color: theme.brandDeep },
+  peopleModalEmpty: { fontSize: theme.type.body, color: theme.ink, paddingVertical: theme.space.sm, borderBottomWidth: 1, borderBottomColor: theme.line },
   lifetimeStatCard: { flex: 1, backgroundColor: theme.surface, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.line, paddingVertical: theme.space.md, paddingHorizontal: theme.space.sm, alignItems: 'center' },
   lifetimeStatValue: { fontSize: theme.type.title, fontWeight: theme.weight.semibold, color: theme.ink },
   lifetimeStatLabel: { fontSize: theme.type.caption, color: theme.inkMute, marginTop: 2 },
